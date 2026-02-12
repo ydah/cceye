@@ -69,19 +69,25 @@ Install/uninstall a LaunchAgent for background monitoring with log files under `
 - Node.js 20 or later
 - Claude Code logs available locally (e.g. `~/.claude/projects`)
 
-### Build from source
+### Install from npm (recommended)
+
+```bash
+npm install -g cceye
+```
+
+### Run without install
+
+```bash
+npx cceye status
+```
+
+### Build from source (development)
 
 ```bash
 git clone https://github.com/ydah/cceye.git
 cd cceye
 npm install
 npm run build
-```
-
-### Run directly
-
-```bash
-node dist/index.js status
 ```
 
 ### Development checks
@@ -97,11 +103,13 @@ npm run lint
 
 ### Quick Start
 
-1. Create config:
+If you installed globally, use `cceye`.  
+If not, replace it with `npx cceye`.
+
+1. Generate config interactively:
 
 ```bash
-mkdir -p ~/.config/cceye
-cp config.example.yaml ~/.config/cceye/config.yaml
+cceye init
 ```
 
 2. Edit thresholds and notification settings in `~/.config/cceye/config.yaml`.
@@ -109,19 +117,19 @@ cp config.example.yaml ~/.config/cceye/config.yaml
 3. Run a one-shot status check:
 
 ```bash
-node dist/index.js status
+cceye status
 ```
 
 4. Start daemon mode:
 
 ```bash
-node dist/index.js
+cceye
 ```
 
 5. Start dashboard mode:
 
 ```bash
-node dist/index.js dashboard
+cceye dashboard
 ```
 
 ### Commands
@@ -140,7 +148,7 @@ Commands:
 
 Notes:
 - Any command accepts `--config <path>`.
-- `init` reads `config.example.yaml` from the current working directory.
+- If not installed globally, run commands with `npx cceye <command>`.
 
 ---
 
@@ -229,13 +237,13 @@ Legacy:
 Install:
 
 ```bash
-node dist/index.js install --config ~/.config/cceye/config.yaml
+cceye install --config ~/.config/cceye/config.yaml
 ```
 
 Uninstall:
 
 ```bash
-node dist/index.js uninstall --config ~/.config/cceye/config.yaml
+cceye uninstall --config ~/.config/cceye/config.yaml
 ```
 
 Logs:
@@ -261,7 +269,7 @@ When a channel is enabled, all required fields for that channel must be present 
 
 ### Dashboard terminal capability errors
 
-Rebuild before running to ensure `dist/` is up to date:
+When running from source, rebuild before running to ensure `dist/` is up to date:
 
 ```bash
 npm run build

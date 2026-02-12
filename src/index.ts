@@ -256,7 +256,16 @@ export async function initConfig(): Promise<void> {
 
   rl.close();
 
-  const template = fs.readFileSync(path.join(process.cwd(), "config.example.yaml"), "utf8");
+  const templateCandidates = [
+    path.join(process.cwd(), "config.example.yaml"),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "config.example.yaml"),
+  ];
+  const templatePath = templateCandidates.find((candidate) => fs.existsSync(candidate));
+  if (!templatePath) {
+    throw new Error("config.example.yaml not found");
+  }
+
+  const template = fs.readFileSync(templatePath, "utf8");
   const content = template
     .replace("claude_data_dir: \"~/.claude/projects\"", `claude_data_dir: "${dataDir.trim() || "~/.claude/projects"}"`)
     .replace(/polling_interval_(?:minutes|milliseconds):\s+\d+/, `polling_interval_milliseconds: ${polling.trim() || "300000"}`)

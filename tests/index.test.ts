@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const originalHome = process.env.HOME;
 const originalPlatform = process.platform;
+const originalCwd = process.cwd();
 
 function writeConfig(configPath: string, dataDir: string): void {
   const yaml = `claude_data_dir: "${dataDir}"
@@ -137,6 +138,7 @@ describe("index.ts", () => {
     vi.useRealTimers();
     process.env.HOME = originalHome;
     Object.defineProperty(process, "platform", { value: originalPlatform });
+    process.chdir(originalCwd);
     if (tempRoot) {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -239,6 +241,9 @@ describe("index.ts", () => {
 
   it("writes config interactively with initConfig", async () => {
     const index = await import("../src/index.ts");
+    const isolatedCwd = path.join(tempRoot, "empty-cwd");
+    fs.mkdirSync(isolatedCwd, { recursive: true });
+    process.chdir(isolatedCwd);
 
     const question = vi
       .fn<(q: string, cb: (answer: string) => void) => void>()
