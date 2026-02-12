@@ -230,7 +230,11 @@ Legacy:
 | `~/.config/cceye/data.json` | Dashboard-facing current aggregates and history |
 | `~/.config/cceye/pricing-cache.json` | Cached model pricing data |
 
-## macOS LaunchAgent
+## Run as a Background Daemon
+
+### Option 1: macOS LaunchAgent (recommended)
+
+This is the most reliable way to keep the daemon running in the background on macOS, including after login.
 
 Install:
 
@@ -248,6 +252,25 @@ Logs:
 
 - `~/Library/Logs/cceye/stdout.log`
 - `~/Library/Logs/cceye/stderr.log`
+
+### Option 2: `nohup` (quick/manual)
+
+Use this when you want a simple background process without installing LaunchAgent.
+
+Start:
+
+```bash
+mkdir -p ~/.local/state/cceye
+nohup cceye --config ~/.config/cceye/config.yaml > ~/.local/state/cceye/daemon.log 2>&1 &
+echo $! > ~/.local/state/cceye/daemon.pid
+```
+
+Stop:
+
+```bash
+kill "$(cat ~/.local/state/cceye/daemon.pid)"
+rm -f ~/.local/state/cceye/daemon.pid
+```
 
 ## Troubleshooting
 
