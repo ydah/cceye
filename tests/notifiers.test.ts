@@ -115,29 +115,52 @@ describe("notifiers", () => {
     await expect(notifier.send(alert)).rejects.toThrow("slack webhook request failed with status 500");
   });
 
-  it("MacosNotifier executes osascript only when enabled on macOS", async () => {
-    const execMock = vi.fn((_: string, cb: (err?: Error | null) => void) => cb(null));
-    vi.doMock("child_process", () => ({ exec: execMock }));
+  it("MacosNotifier uses NotificationCenter only when enabled on macOS", async () => {
+    const notifyMock = vi.fn((_: unknown, cb: (err: Error | null) => void) => cb(null));
+    const notificationCenterCtor = vi.fn(function NotificationCenterMock() {
+      return { notify: notifyMock };
+    });
+    const execFileMock = vi.fn((_: string, __: string[], cb: (err?: Error | null) => void) => cb(null));
+    vi.doMock("node-notifier", () => ({
+      default: { NotificationCenter: notificationCenterCtor },
+      NotificationCenter: notificationCenterCtor,
+    }));
+    vi.doMock("child_process", () => ({ execFile: execFileMock }));
     const { MacosNotifier } = await import("../src/notifiers/macos.ts");
 
     Object.defineProperty(process, "platform", { value: "darwin" });
     const notifier = new MacosNotifier(baseConfig());
     await notifier.send(alert);
-    expect(execMock).toHaveBeenCalledTimes(1);
+    expect(notifyMock).toHaveBeenCalledTimes(1);
+    expect(execFileMock).not.toHaveBeenCalled();
 
     Object.defineProperty(process, "platform", { value: "linux" });
     const notifier2 = new MacosNotifier(baseConfig());
     await notifier2.send(alert);
-    expect(execMock).toHaveBeenCalledTimes(1);
+    expect(notifyMock).toHaveBeenCalledTimes(1);
+    expect(notificationCenterCtor).toHaveBeenCalledTimes(1);
   });
 
-  it("MacosNotifier builds command text for each window and rejects osascript errors", async () => {
-    const execMock = vi
+  it("MacosNotifier falls back to JXA on missing terminal-notifier and rejects fallback errors", async () => {
+    const notifierMissingBinary = Object.assign(new Error("spawn terminal-notifier ENOENT"), { code: "ENOENT" });
+    const notifyMock = vi
       .fn()
-      .mockImplementationOnce((_: string, cb: (err?: Error | null) => void) => cb(null))
-      .mockImplementationOnce((_: string, cb: (err?: Error | null) => void) => cb(null))
-      .mockImplementationOnce((_: string, cb: (err?: Error | null) => void) => cb(new Error("osascript failed")));
-    vi.doMock("child_process", () => ({ exec: execMock }));
+      .mockImplementationOnce((_: unknown, cb: (err: Error | null) => void) => cb(notifierMissingBinary))
+      .mockImplementationOnce((_: unknown, cb: (err: Error | null) => void) => cb(notifierMissingBinary))
+      .mockImplementationOnce((_: unknown, cb: (err: Error | null) => void) => cb(notifierMissingBinary));
+    const notificationCenterCtor = vi.fn(function NotificationCenterMock() {
+      return { notify: notifyMock };
+    });
+    const execFileMock = vi
+      .fn()
+      .mockImplementationOnce((_: string, __: string[], cb: (err?: Error | null) => void) => cb(null))
+      .mockImplementationOnce((_: string, __: string[], cb: (err?: Error | null) => void) => cb(null))
+      .mockImplementationOnce((_: string, __: string[], cb: (err?: Error | null) => void) => cb(new Error("osascript failed")));
+    vi.doMock("node-notifier", () => ({
+      default: { NotificationCenter: notificationCenterCtor },
+      NotificationCenter: notificationCenterCtor,
+    }));
+    vi.doMock("child_process", () => ({ execFile: execFileMock }));
     const { MacosNotifier } = await import("../src/notifiers/macos.ts");
 
     Object.defineProperty(process, "platform", { value: "darwin" });
@@ -149,14 +172,21 @@ describe("notifiers", () => {
     await notifier.send({ ...alert, window: "monthly" });
     await expect(notifier.send(alertWithWindow("custom-window"))).rejects.toThrow("osascript failed");
 
-    const weeklyCommand = String(execMock.mock.calls[0]?.[0]);
-    const monthlyCommand = String(execMock.mock.calls[1]?.[0]);
-    const fallbackCommand = String(execMock.mock.calls[2]?.[0]);
-    expect(weeklyCommand).toContain("CRITICAL");
-    expect(weeklyCommand).toContain("Weekly cost");
-    expect(weeklyCommand).not.toContain('sound name "Funk"');
-    expect(monthlyCommand).toContain("Monthly cost");
-    expect(fallbackCommand).toContain("custom-window cost");
+    expect(notificationCenterCtor).toHaveBeenCalledTimes(1);
+    expect(notifyMock).toHaveBeenCalledTimes(3);
+    expect(execFileMock).toHaveBeenCalledTimes(3);
+
+    const weeklyPayload = notifyMock.mock.calls[0]?.[0] as { subtitle?: string; message?: string; sound?: string | false };
+    const weeklyJxaArgs = execFileMock.mock.calls[0]?.[1] as string[];
+    const monthlyJxaArgs = execFileMock.mock.calls[1]?.[1] as string[];
+    const fallbackJxaArgs = execFileMock.mock.calls[2]?.[1] as string[];
+    expect(weeklyPayload.subtitle).toBe("CRITICAL");
+    expect(weeklyPayload.message).toContain("Weekly cost");
+    expect(weeklyPayload.sound).toBe(false);
+    expect(weeklyJxaArgs[1]).toBe("JavaScript");
+    expect(weeklyJxaArgs[4]).toContain("Weekly cost");
+    expect(monthlyJxaArgs[4]).toContain("Monthly cost");
+    expect(fallbackJxaArgs[4]).toContain("custom-window cost");
   });
 
   it("EmailNotifier builds transport and sends email", async () => {
