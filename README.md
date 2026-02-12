@@ -15,6 +15,7 @@
 </p>
 
 <p align="center">
+  <a href="https://badge.fury.io/js/cceye"><img src="https://badge.fury.io/js/cceye.svg" alt="npm version" height="18"></a>
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg">
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D20-339933.svg?logo=node.js&logoColor=white">
   <img alt="TypeScript" src="https://img.shields.io/badge/typescript-5.x-3178c6.svg?logo=typescript&logoColor=white">
