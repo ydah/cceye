@@ -20,7 +20,6 @@ function formatNotificationTimestamp(
 
 export function updateNotificationLog(log: LogWidget, entries: NotificationHistoryEntry[], timezone: string): void {
   log.setContent("");
-  let lastDate = "";
   entries
     .slice(0, 30)
     .reverse()
@@ -29,13 +28,8 @@ export function updateNotificationLog(log: LogWidget, entries: NotificationHisto
       if (!formattedTimestamp) {
         return;
       }
-
-      if (formattedTimestamp.date !== lastDate) {
-        log.log(formattedTimestamp.date);
-        lastDate = formattedTimestamp.date;
-      }
       const label = entry.level === "critical" ? "CRIT" : "WARN";
       const windowLabel = entry.window === "daily" ? "Daily" : entry.window === "weekly" ? "Weekly" : "Monthly";
-      log.log(`${formattedTimestamp.time} [${label}] ${windowLabel} $${entry.currentCost.toFixed(2)}`);
+      log.log(`${formattedTimestamp.date} ${formattedTimestamp.time} [${label}] ${windowLabel} $${entry.currentCost.toFixed(2)}`);
     });
 }

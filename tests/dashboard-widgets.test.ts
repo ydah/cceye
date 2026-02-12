@@ -72,7 +72,7 @@ describe("dashboard theme and widgets", () => {
     expect(zeroArg.data[1][2]).toBe("0%");
   });
 
-  it("updates notification log with date grouping", () => {
+  it("updates notification log with timezone-aware date and time", () => {
     const setContent = vi.fn();
     const writeLog = vi.fn();
     const log: LogWidget = { focus: vi.fn(), setContent, log: writeLog, scroll: vi.fn() };
@@ -101,10 +101,10 @@ describe("dashboard theme and widgets", () => {
     expect(setContent).toHaveBeenCalledWith("");
     expect(writeLog).toHaveBeenCalled();
     const logs = writeLog.mock.calls.map((call: unknown[]) => String(call[0]));
-    expect(logs.some((line) => line.includes("2026-02-11"))).toBe(true);
+    expect(logs.length).toBe(2);
     expect(logs.some((line) => line.includes("[CRIT]"))).toBe(true);
-    expect(logs.some((line) => line.includes("19:00 [WARN] Daily $1.20"))).toBe(true);
-    expect(logs.some((line) => line.includes("20:00 [CRIT] Weekly $2.30"))).toBe(true);
+    expect(logs.some((line) => line.includes("2026-02-11 19:00 [WARN] Daily $1.20"))).toBe(true);
+    expect(logs.some((line) => line.includes("2026-02-11 20:00 [CRIT] Weekly $2.30"))).toBe(true);
   });
 
   it("updates status bar text", () => {
