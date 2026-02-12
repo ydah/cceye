@@ -76,29 +76,35 @@ describe("dashboard theme and widgets", () => {
     const setContent = vi.fn();
     const writeLog = vi.fn();
     const log: LogWidget = { focus: vi.fn(), setContent, log: writeLog, scroll: vi.fn() };
-    updateNotificationLog(log, [
-      {
-        timestamp: "2026-02-11T10:00:00.000Z",
-        level: "warning",
-        window: "daily",
-        currentCost: 1.2,
-        threshold: 1,
-        channels: [],
-      },
-      {
-        timestamp: "2026-02-11T11:00:00.000Z",
-        level: "critical",
-        window: "weekly",
-        currentCost: 2.3,
-        threshold: 2,
-        channels: [],
-      },
-    ]);
+    updateNotificationLog(
+      log,
+      [
+        {
+          timestamp: "2026-02-11T10:00:00.000Z",
+          level: "warning",
+          window: "daily",
+          currentCost: 1.2,
+          threshold: 1,
+          channels: [],
+        },
+        {
+          timestamp: "2026-02-11T11:00:00.000Z",
+          level: "critical",
+          window: "weekly",
+          currentCost: 2.3,
+          threshold: 2,
+          channels: [],
+        },
+      ],
+      "Asia/Tokyo"
+    );
     expect(setContent).toHaveBeenCalledWith("");
     expect(writeLog).toHaveBeenCalled();
     const logs = writeLog.mock.calls.map((call: unknown[]) => String(call[0]));
     expect(logs.some((line) => line.includes("2026-02-11"))).toBe(true);
     expect(logs.some((line) => line.includes("[CRIT]"))).toBe(true);
+    expect(logs.some((line) => line.includes("19:00 [WARN] Daily $1.20"))).toBe(true);
+    expect(logs.some((line) => line.includes("20:00 [CRIT] Weekly $2.30"))).toBe(true);
   });
 
   it("updates status bar text", () => {

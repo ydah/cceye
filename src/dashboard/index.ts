@@ -7,7 +7,7 @@ import { updateStatusBar } from "./widgets/status-bar.js";
 import type { DataStoreState } from "../data-store.js";
 import type { Config } from "../config.js";
 
-type DashboardConfig = Pick<Config, "thresholds">;
+type DashboardConfig = Pick<Config, "thresholds" | "timezone">;
 
 export class Dashboard {
   private layout = createLayout();
@@ -48,7 +48,7 @@ export class Dashboard {
     renderCostProgress(this.layout.costBox, data.currentCosts, config);
     updateHourlyTrend(this.layout.trendLine, data.hourlyTrend);
     updateModelBreakdown(this.layout.modelTable, data.modelBreakdown[this.selectedWindow]);
-    updateNotificationLog(this.layout.notificationLog, data.notificationHistory);
+    updateNotificationLog(this.layout.notificationLog, data.notificationHistory, config.timezone);
     updateStatusBar(this.layout.statusBar, lastUpdated, nextPoll, statusMessage);
     this.layout.screen.render();
   }

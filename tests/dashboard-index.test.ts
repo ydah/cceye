@@ -42,12 +42,13 @@ describe("Dashboard class", () => {
     const updateNotificationLog = vi.fn();
     const updateStatusBar = vi.fn();
 
-    const config: Pick<Config, "thresholds"> = {
+    const config: Pick<Config, "thresholds" | "timezone"> = {
       thresholds: {
         daily: { warning: 5, critical: 10 },
         weekly: { warning: 10, critical: 20 },
         monthly: { warning: 30, critical: 40 },
       },
+      timezone: "Asia/Tokyo",
     };
 
     vi.doMock("../src/dashboard/layout.ts", () => ({ createLayout: () => layout }));
@@ -112,7 +113,7 @@ describe("Dashboard class", () => {
     expect(renderCostProgress).toHaveBeenCalledTimes(1);
     expect(updateHourlyTrend).toHaveBeenCalledTimes(1);
     expect(updateModelBreakdown).toHaveBeenCalledWith(layout.modelTable, [{ model: "m", cost: 2 }]);
-    expect(updateNotificationLog).toHaveBeenCalledTimes(1);
+    expect(updateNotificationLog).toHaveBeenCalledWith(layout.notificationLog, [], "Asia/Tokyo");
     expect(updateStatusBar).toHaveBeenCalledTimes(1);
     expect(layout.screen.render).toHaveBeenCalledTimes(2);
 
