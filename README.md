@@ -21,8 +21,6 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg">
 </p>
 
----
-
 ## Key Features
 
 ### Claude Usage Log Parsing
@@ -60,8 +58,6 @@ Pricing is fetched from LiteLLM and cached at `~/.config/cceye/pricing-cache.jso
 
 Install/uninstall a LaunchAgent for background monitoring with log files under `~/Library/Logs/cceye/`.
 
----
-
 ## Installation
 
 ### Prerequisites
@@ -96,8 +92,6 @@ npm run build
 npm run typecheck
 npm run lint
 ```
-
----
 
 ## Usage
 
@@ -162,8 +156,6 @@ Notes:
 - If not installed globally, run commands with `npx cceye <command>`.
 - Starting with no arguments (`cceye`) clears notification cooldown flags once before daemon startup.
 
----
-
 ## Configuration
 
 ### Config file location
@@ -215,8 +207,6 @@ Legacy:
 | `CCEYE_SLACK_WEBHOOK_URL` | Fills Slack webhook when Slack is enabled and URL is missing in config |
 | `CCEYE_SMTP_PASS` | Fills SMTP password when email is enabled and password is missing in config |
 
----
-
 ## Keybindings
 
 ### Dashboard Controls
@@ -231,8 +221,6 @@ Legacy:
 | `Tab` | Move focus to next panel |
 | `↑` / `↓` | Scroll notification log |
 
----
-
 ## Data Files
 
 | File | Purpose |
@@ -241,8 +229,6 @@ Legacy:
 | `~/.config/cceye/state.json` | Notification state, cooldown markers, and internal state |
 | `~/.config/cceye/data.json` | Dashboard-facing current aggregates and history |
 | `~/.config/cceye/pricing-cache.json` | Cached model pricing data |
-
----
 
 ## macOS LaunchAgent
 
@@ -262,8 +248,6 @@ Logs:
 
 - `~/Library/Logs/cceye/stdout.log`
 - `~/Library/Logs/cceye/stderr.log`
-
----
 
 ## Troubleshooting
 
@@ -287,8 +271,6 @@ When running from source, rebuild before running to ensure `dist/` is up to date
 npm run build
 ```
 
----
-
 ## Development
 
 ```bash
@@ -297,18 +279,6 @@ npm test
 npm run test:coverage
 npm run build
 ```
-
----
-
-## Release
-
-The `Release` GitHub Actions workflow publishes when a `v*` tag is pushed.
-
-- Preferred: npm trusted publishing (OIDC). Leave `NPM_TOKEN` unset.
-- Fallback: set `NPM_TOKEN` in repository secrets and the workflow will use token auth.
-- If token auth fails with `EOTP`, replace `NPM_TOKEN` with an npm Automation token.
-
----
 
 ## License
 

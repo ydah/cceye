@@ -51,36 +51,5 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish to npm
-        run: |
-          set -o pipefail
-
-          echo "Attempting npm trusted publishing (OIDC)."
-          trusted_log="$(mktemp)"
-          if npm publish --provenance 2>&1 | tee "${trusted_log}"; then
-            exit 0
-          fi
-
-          if [ -z "${NPM_TOKEN}" ]; then
-            echo "Trusted publishing failed and NPM_TOKEN is not configured." >&2
-            exit 1
-          fi
-
-          if ! grep -Eq "E401|ENEEDAUTH|requires authentication|authentication token|Unable to authenticate" "${trusted_log}"; then
-            echo "Trusted publishing failed for a non-auth reason. Skipping NPM_TOKEN fallback." >&2
-            exit 1
-          fi
-
-          echo "Trusted publishing auth failed. Falling back to NPM_TOKEN."
-          token_log="$(mktemp)"
-          if NODE_AUTH_TOKEN="${NPM_TOKEN}" npm publish --provenance 2>&1 | tee "${token_log}"; then
-            exit 0
-          fi
-
-          if grep -q "EOTP" "${token_log}"; then
-            echo "NPM_TOKEN requires OTP. Use an npm Automation token or remove NPM_TOKEN to use trusted publishing." >&2
-          fi
-
-          exit 1
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm (Trusted Publishing)
+        run: npm publish --provenance
