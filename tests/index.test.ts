@@ -11,7 +11,7 @@ const originalCwd = process.cwd();
 
 function writeConfig(configPath: string, dataDir: string): void {
   const yaml = `claude_data_dir: "${dataDir}"
-polling_interval_minutes: 5
+polling_interval_milliseconds: 300000
 timezone: "UTC"
 cost_mode: "calculate"
 thresholds:

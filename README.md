@@ -1,3 +1,5 @@
+<h1 align="center">cceye</h1>
+
 <p align="center">
   <img src="assets/logo-header.svg" alt="cceye header logo">
 </p>
@@ -97,8 +99,7 @@ npm run lint
 
 ### Quick Start
 
-If you installed globally, use `cceye`.  
-If not, replace it with `npx cceye`.
+If you installed globally, use `cceye`. If not, replace it with `npx cceye`.
 
 1. Generate config interactively:
 
@@ -151,7 +152,7 @@ Commands:
   uninstall  Remove macOS LaunchAgent
 ```
 
-Notes:
+#### Notes
 - Any command accepts `--config <path>`.
 - If not installed globally, run commands with `npx cceye <command>`.
 - Starting with no arguments (`cceye`) clears notification cooldown flags once before daemon startup.
@@ -188,10 +189,6 @@ See `config.example.yaml` for a complete template.
 | `notification_cooldown_minutes` | Cooldown for repeated alerts of same window/level |
 | `log_level` | `debug`, `info`, `warn`, `error` |
 | `dashboard.refresh_interval_seconds` | Required setting (currently not used by runtime logic) |
-
-Legacy:
-- `polling_interval_minutes` is still accepted for backward compatibility.
-- If both `polling_interval_milliseconds` and `polling_interval_minutes` are set, milliseconds takes precedence.
 
 ### Validation rules
 
@@ -236,19 +233,19 @@ Legacy:
 
 This is the most reliable way to keep the daemon running in the background on macOS, including after login.
 
-Install:
+#### Install
 
 ```bash
 cceye install --config ~/.config/cceye/config.yaml
 ```
 
-Uninstall:
+#### Uninstall
 
 ```bash
 cceye uninstall --config ~/.config/cceye/config.yaml
 ```
 
-Logs:
+#### Logs
 
 - `~/Library/Logs/cceye/stdout.log`
 - `~/Library/Logs/cceye/stderr.log`
@@ -257,7 +254,7 @@ Logs:
 
 Use this when you want a simple background process without installing LaunchAgent.
 
-Start:
+#### Start
 
 ```bash
 mkdir -p ~/.local/state/cceye
@@ -265,7 +262,7 @@ nohup cceye --config ~/.config/cceye/config.yaml > ~/.local/state/cceye/daemon.l
 echo $! > ~/.local/state/cceye/daemon.pid
 ```
 
-Stop:
+#### Stop
 
 ```bash
 kill "$(cat ~/.local/state/cceye/daemon.pid)"

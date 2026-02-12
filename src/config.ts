@@ -41,7 +41,6 @@ const dashboardSchema = z.object({
 const configSchema = z
   .object({
     claude_data_dir: z.string().min(1).default("~/.claude/projects"),
-    polling_interval_minutes: z.number().int().min(1).optional(),
     polling_interval_milliseconds: z.number().int().positive().optional(),
     timezone: z.string().min(1),
     cost_mode: z.enum(["auto", "calculate", "display"]),
@@ -56,11 +55,11 @@ const configSchema = z
     dashboard: dashboardSchema,
   })
   .superRefine((value, context) => {
-    if (value.polling_interval_minutes === undefined && value.polling_interval_milliseconds === undefined) {
+    if (value.polling_interval_milliseconds === undefined) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["polling_interval_milliseconds"],
-        message: "either polling_interval_milliseconds or polling_interval_minutes is required",
+        message: "polling_interval_milliseconds is required",
       });
     }
 
@@ -105,7 +104,7 @@ const configSchema = z
   })
   .transform((value) => ({
     ...value,
-    polling_interval_milliseconds: value.polling_interval_milliseconds ?? value.polling_interval_minutes! * 60 * 1000,
+    polling_interval_milliseconds: value.polling_interval_milliseconds!,
   }));
 
 export type Config = z.infer<typeof configSchema>;

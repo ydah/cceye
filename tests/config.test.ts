@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 function baseConfigYaml(overrides = ""): string {
   return `claude_data_dir: "~/claude"
-polling_interval_minutes: 5
+polling_interval_milliseconds: 300000
 timezone: "UTC"
 cost_mode: "auto"
 thresholds:
@@ -72,14 +72,13 @@ describe("config", () => {
     const config = loadConfig(configPath);
 
     expect(config.claude_data_dir).toBe(path.join(tempHome, "claude"));
-    expect(config.polling_interval_minutes).toBe(5);
     expect(config.polling_interval_milliseconds).toBe(300000);
     expect(config.cost_mode).toBe("auto");
   });
 
-  it("loads config with millisecond polling interval only", async () => {
+  it("loads config with millisecond polling interval", async () => {
     const configPath = path.join(tempDir, "config.yaml");
-    fs.writeFileSync(configPath, baseConfigYaml().replace("polling_interval_minutes: 5", "polling_interval_milliseconds: 2500"));
+    fs.writeFileSync(configPath, baseConfigYaml().replace("polling_interval_milliseconds: 300000", "polling_interval_milliseconds: 2500"));
     const { loadConfig } = await import("../src/config.ts");
     const config = loadConfig(configPath);
     expect(config.polling_interval_milliseconds).toBe(2500);
@@ -102,7 +101,7 @@ describe("config", () => {
     fs.writeFileSync(
       configPath,
       `claude_data_dir: "~/claude"
-polling_interval_minutes: 5
+polling_interval_milliseconds: 300000
 timezone: "UTC"
 cost_mode: "auto"
 thresholds:
@@ -142,7 +141,7 @@ dashboard:
     fs.writeFileSync(
       configPath,
       `claude_data_dir: "~/claude"
-polling_interval_minutes: 5
+polling_interval_milliseconds: 300000
 timezone: "UTC"
 cost_mode: "auto"
 thresholds:
@@ -184,7 +183,7 @@ dashboard:
     fs.writeFileSync(
       configPath,
       `claude_data_dir: "~/claude"
-polling_interval_minutes: 5
+polling_interval_milliseconds: 300000
 timezone: "UTC"
 cost_mode: "auto"
 thresholds:
