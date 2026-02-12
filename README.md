@@ -1,5 +1,3 @@
-<h1 align="center">cceye</h1>
-
 <p align="center">
   <img src="assets/logo-header.svg" alt="cceye header logo">
 </p>
