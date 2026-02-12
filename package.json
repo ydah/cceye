@@ -1,0 +1,82 @@
+{
+  "name": "cceye",
+  "version": "1.0.0",
+  "description": "Monitor Claude Code JSONL usage logs, estimate token costs, and notify on threshold breaches.",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "bin": {
+    "cceye": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "config.example.yaml"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "claude-code",
+    "monitoring",
+    "cost",
+    "cli",
+    "tui",
+    "notifications"
+  ],
+  "author": {
+    "name": "Yudai Takada",
+    "email": "t.yudai92@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ydah/cceye.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ydah/cceye/issues"
+  },
+  "homepage": "https://github.com/ydah/cceye#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/blessed": "^0.1.27",
+    "@types/node": "^25.2.3",
+    "@types/node-cron": "^3.0.11",
+    "@types/nodemailer": "^7.0.9",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^9.39.2",
+    "globals": "^17.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.55.0",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.11.0",
+    "chalk": "^5.6.2",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^8.0.1",
+    "winston": "^3.19.0",
+    "yaml": "^2.8.2",
+    "zod": "^4.3.6"
+  },
+  "overrides": {
+    "xml2js": "^0.6.2"
+  }
+}

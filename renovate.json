@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "dependencyDashboardAutoclose": true,
+  "enabledManagers": [
+    "npm"
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": [
+        "eslint",
+        "@eslint/js"
+      ],
+      "allowedVersions": "<10"
+    }
+  ]
+}

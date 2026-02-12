@@ -1,0 +1,54 @@
+# Claude Code data directory (default: ~/.claude/projects)
+claude_data_dir: "~/.claude/projects"
+
+# Polling interval (milliseconds)
+polling_interval_milliseconds: 300000
+
+# Timezone for daily/weekly/monthly windows
+timezone: "Asia/Tokyo"
+
+# Cost calculation mode: auto | calculate | display
+cost_mode: "auto"
+
+# Thresholds (USD)
+thresholds:
+  daily:
+    warning: 5.0
+    critical: 10.0
+  weekly:
+    warning: 25.0
+    critical: 50.0
+  monthly:
+    warning: 80.0
+    critical: 150.0
+
+# Notification settings
+notifications:
+  console:
+    enabled: true
+  macos:
+    enabled: true
+    sound: true
+  slack:
+    enabled: false
+    webhook_url: "https://hooks.slack.com/services/..."
+    mention: ""
+  email:
+    enabled: false
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+    smtp_secure: false
+    smtp_user: ""
+    smtp_pass: ""
+    from: ""
+    to: ""
+
+# Notification cooldown (minutes)
+notification_cooldown_minutes: 60
+
+# Log level
+log_level: "info"
+
+# Dashboard settings
+dashboard:
+  refresh_interval_seconds: 60

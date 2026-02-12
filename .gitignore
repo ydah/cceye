@@ -1,0 +1,10 @@
+tmp/
+.idea/
+node_modules/
+dist/
+config.yaml
+state.json
+data.json
+.DS_Store
+*.log
+coverage/
