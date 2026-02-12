@@ -1,6 +1,6 @@
 {
   "name": "cceye",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Monitor Claude Code JSONL usage logs, estimate token costs, and notify on threshold breaches.",
   "main": "dist/index.js",
   "type": "module",

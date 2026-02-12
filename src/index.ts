@@ -29,6 +29,11 @@ import { hourlyTrend, nextPoll, toModelBreakdown } from "./polling-metrics.js";
 export { collectUsageEntries, hourlyTrend, nextPoll, toModelBreakdown };
 
 export async function main(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
+  if (hasFlag(cliArgs, ["--version", "-v"])) {
+    console.log(readPackageVersion());
+    return;
+  }
+
   const command = findCommand(cliArgs);
   if (!command) {
     await startDaemon({ dashboard: false }, cliArgs);
@@ -55,6 +60,23 @@ export async function main(cliArgs: string[] = process.argv.slice(2)): Promise<v
     return;
   }
   throw new Error(`Unknown command: ${command}`);
+}
+
+function hasFlag(args: string[], flags: string[]): boolean {
+  return args.some((arg) => flags.includes(arg));
+}
+
+export function readPackageVersion(): string {
+  const packagePath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+  try {
+    const parsed = JSON.parse(fs.readFileSync(packagePath, "utf8")) as { version?: unknown };
+    if (typeof parsed.version === "string" && parsed.version.length > 0) {
+      return parsed.version;
+    }
+  } catch {
+    return "unknown";
+  }
+  return "unknown";
 }
 
 function findCommand(args: string[]): string | undefined {
@@ -368,14 +390,21 @@ export function shutdown(logger: ReturnType<typeof createLogger>): void {
 }
 /* v8 ignore stop */
 
-/* v8 ignore start */
-const isDirectRun = (() => {
-  const executedPath = process.argv[1];
+export function isDirectRunPath(executedPath: string | undefined, moduleUrl: string): boolean {
   if (!executedPath) {
     return false;
   }
-  return path.resolve(executedPath) === fileURLToPath(import.meta.url);
-})();
+
+  const modulePath = fileURLToPath(moduleUrl);
+  try {
+    return fs.realpathSync(executedPath) === fs.realpathSync(modulePath);
+  } catch {
+    return path.resolve(executedPath) === path.resolve(modulePath);
+  }
+}
+
+/* v8 ignore start */
+const isDirectRun = isDirectRunPath(process.argv[1], import.meta.url);
 
 if (isDirectRun) {
   main().catch((error) => {

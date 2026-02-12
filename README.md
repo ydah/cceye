@@ -138,6 +138,8 @@ cceye dashboard
 cceye [command] [--config /path/to/config.yaml]
 
 Commands:
+  --version  Print CLI version
+  -v         Print CLI version
   (none)     Start daemon mode
   dashboard  Start TUI dashboard mode
   status     Run one poll cycle and print current totals (no notifications)

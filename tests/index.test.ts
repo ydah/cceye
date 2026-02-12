@@ -2,6 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import readline from "readline";
+import { pathToFileURL } from "url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const originalHome = process.env.HOME;
@@ -169,6 +170,30 @@ describe("index.ts", () => {
   it("accepts --config before command", async () => {
     const index = await import("../src/index.ts");
     await expect(index.main(["--config", configPath, "status"])).resolves.toBeUndefined();
+  });
+
+  it("prints package version with --version", async () => {
+    const index = await import("../src/index.ts");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const packageJson = JSON.parse(fs.readFileSync(path.join(originalCwd, "package.json"), "utf8")) as {
+      version: string;
+    };
+
+    await expect(index.main(["--version"])).resolves.toBeUndefined();
+
+    expect(logSpy).toHaveBeenCalledWith(packageJson.version);
+  });
+
+  it("treats symlinked executable path as direct run", async () => {
+    const index = await import("../src/index.ts");
+    const actualScriptPath = path.join(tempRoot, "actual-index.js");
+    const symlinkPath = path.join(tempRoot, "symlink-index.js");
+
+    fs.writeFileSync(actualScriptPath, "");
+    fs.symlinkSync(actualScriptPath, symlinkPath);
+
+    expect(index.isDirectRunPath(undefined, pathToFileURL(actualScriptPath).href)).toBe(false);
+    expect(index.isDirectRunPath(symlinkPath, pathToFileURL(actualScriptPath).href)).toBe(true);
   });
 
   it("deduplicates entries in collectUsageEntries", async () => {
