@@ -120,13 +120,19 @@ cceye init
 cceye status
 ```
 
-4. Start daemon mode:
+4. Start daemon mode (foreground, silent):
 
 ```bash
 cceye
 ```
 
-5. Start dashboard mode:
+5. Start daemon mode with logs (debug):
+
+```bash
+cceye -d
+```
+
+6. Start dashboard mode:
 
 ```bash
 cceye dashboard
@@ -140,7 +146,10 @@ cceye [command] [--config /path/to/config.yaml]
 Commands:
   --version  Print CLI version
   -v         Print CLI version
-  (none)     Start daemon mode
+  (none)     Start daemon mode (silent)
+  debug      Start daemon mode with logs
+  --debug    Enable debug logs for daemon mode
+  -d         Alias for --debug
   dashboard  Start TUI dashboard mode
   status     Run one poll cycle and print current totals (no notifications)
   init       Interactive config generator
@@ -151,6 +160,7 @@ Commands:
 Notes:
 - Any command accepts `--config <path>`.
 - If not installed globally, run commands with `npx cceye <command>`.
+- Starting with no arguments (`cceye`) clears notification cooldown flags once before daemon startup.
 
 ---
 

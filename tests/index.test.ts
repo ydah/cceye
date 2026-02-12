@@ -172,6 +172,33 @@ describe("index.ts", () => {
     await expect(index.main(["--config", configPath, "status"])).resolves.toBeUndefined();
   });
 
+  it("removes only the first command token from cli args", async () => {
+    const index = await import("../src/index.ts");
+    expect(index.removeCommandFromArgs(["debug", "--config", configPath])).toEqual(["--config", configPath]);
+    expect(index.removeCommandFromArgs(["--config", configPath, "status"])).toEqual(["--config", configPath]);
+    expect(index.removeCommandFromArgs(["-d", "debug", "--config", configPath])).toEqual(["-d", "--config", configPath]);
+  });
+
+  it("resets notification flags only when started without args", async () => {
+    const index = await import("../src/index.ts");
+    const stateStore = await import("../src/state-store.ts");
+    const state = stateStore.loadState();
+    state.notifications["daily:warning"] = "2026-02-11T10:00:00.000Z";
+    state.notifications["weekly:critical"] = "2026-02-11T10:00:00.000Z";
+    stateStore.saveState(state);
+
+    index.resetNotificationFlagsAtStartupIfNeeded([]);
+    const resetState = stateStore.loadState();
+    expect(resetState.notifications["daily:warning"]).toBeNull();
+    expect(resetState.notifications["weekly:critical"]).toBeNull();
+
+    resetState.notifications["daily:warning"] = "2026-02-11T11:00:00.000Z";
+    stateStore.saveState(resetState);
+    index.resetNotificationFlagsAtStartupIfNeeded(["-d"]);
+    const notResetState = stateStore.loadState();
+    expect(notResetState.notifications["daily:warning"]).toBe("2026-02-11T11:00:00.000Z");
+  });
+
   it("prints package version with --version", async () => {
     const index = await import("../src/index.ts");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});

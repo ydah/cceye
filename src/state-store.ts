@@ -179,6 +179,14 @@ export function recordNotification(
   state.notificationHistory = [entry, ...state.notificationHistory].slice(0, maxEntries);
 }
 
+export function clearNotificationFlags(state: State): void {
+  for (const window of windowKeys) {
+    for (const level of levelKeys) {
+      state.notifications[notificationKey(window, level)] = null;
+    }
+  }
+}
+
 export function resetWindowIfNeeded(state: State, timezone: string, now: Date = new Date()): void {
   const lastPoll = state.lastPollAt ? new Date(state.lastPollAt) : null;
   if (!lastPoll) {

@@ -111,4 +111,18 @@ describe("state-store", () => {
     mod.updateLastPoll(state, new Date("2026-02-11T12:00:00.000Z"));
     expect(state.lastPollAt).toContain("2026-02-11");
   });
+
+  it("clears notification flags without changing cached costs", async () => {
+    const mod = await import("../src/state-store.ts");
+    const state = mod.loadState();
+    state.notifications["daily:warning"] = "2026-02-11T10:00:00.000Z";
+    state.notifications["weekly:critical"] = "2026-02-11T10:00:00.000Z";
+    state.cachedCosts.daily.total = 12.34;
+
+    mod.clearNotificationFlags(state);
+
+    expect(state.notifications["daily:warning"]).toBeNull();
+    expect(state.notifications["weekly:critical"]).toBeNull();
+    expect(state.cachedCosts.daily.total).toBe(12.34);
+  });
 });

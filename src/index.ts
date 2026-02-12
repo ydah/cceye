@@ -9,7 +9,15 @@ import { loadConfigFromArgs, type Config } from "./config.js";
 import { createLogger } from "./logger.js";
 import { evaluateThresholds } from "./threshold-engine.js";
 import { NotificationRouter } from "./notifiers/index.js";
-import { loadState, recordNotification, resetWindowIfNeeded, saveState, shouldNotify, updateLastPoll } from "./state-store.js";
+import {
+  clearNotificationFlags,
+  loadState,
+  recordNotification,
+  resetWindowIfNeeded,
+  saveState,
+  shouldNotify,
+  updateLastPoll,
+} from "./state-store.js";
 import {
   addNotificationHistory,
   loadData,
@@ -28,19 +36,24 @@ import { hourlyTrend, nextPoll, toModelBreakdown } from "./polling-metrics.js";
 
 export { collectUsageEntries, hourlyTrend, nextPoll, toModelBreakdown };
 
+const daemonDebugFlags = ["--debug", "-d"];
+
 export async function main(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
   if (hasFlag(cliArgs, ["--version", "-v"])) {
     console.log(readPackageVersion());
     return;
   }
+  resetNotificationFlagsAtStartupIfNeeded(cliArgs);
 
   const command = findCommand(cliArgs);
-  if (!command) {
-    await startDaemon({ dashboard: false }, cliArgs);
+  const debugMode = command === "debug" || hasFlag(cliArgs, daemonDebugFlags);
+  if (!command || command === "debug") {
+    const daemonArgs = command === "debug" ? removeCommandFromArgs(cliArgs) : cliArgs;
+    await startDaemon({ dashboard: false, debug: debugMode }, daemonArgs);
     return;
   }
   if (command === "dashboard") {
-    await startDaemon({ dashboard: true }, cliArgs);
+    await startDaemon({ dashboard: true, debug: debugMode }, cliArgs);
     return;
   }
   if (command === "status") {
@@ -66,6 +79,23 @@ function hasFlag(args: string[], flags: string[]): boolean {
   return args.some((arg) => flags.includes(arg));
 }
 
+export function shouldResetNotificationFlagsAtStartup(cliArgs: string[]): boolean {
+  return cliArgs.length === 0;
+}
+
+export function resetNotificationFlagsAtStartupIfNeeded(cliArgs: string[]): void {
+  if (!shouldResetNotificationFlagsAtStartup(cliArgs)) {
+    return;
+  }
+  const state = loadState();
+  clearNotificationFlags(state);
+  saveState(state);
+}
+
+function isDebugFlag(arg: string): boolean {
+  return daemonDebugFlags.includes(arg);
+}
+
 export function readPackageVersion(): string {
   const packagePath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
   try {
@@ -82,8 +112,14 @@ export function readPackageVersion(): string {
 function findCommand(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
+    if (typeof arg !== "string") {
+      continue;
+    }
     if (arg === "--config") {
       i += 1;
+      continue;
+    }
+    if (isDebugFlag(arg)) {
       continue;
     }
     return arg;
@@ -91,14 +127,49 @@ function findCommand(args: string[]): string | undefined {
   return undefined;
 }
 
+export function removeCommandFromArgs(args: string[]): string[] {
+  const output: string[] = [];
+  let commandRemoved = false;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (typeof arg !== "string") {
+      continue;
+    }
+
+    if (arg === "--config") {
+      output.push(arg);
+      const configPath = args[i + 1];
+      if (typeof configPath === "string") {
+        output.push(configPath);
+        i += 1;
+      }
+      continue;
+    }
+    if (isDebugFlag(arg)) {
+      output.push(arg);
+      continue;
+    }
+
+    if (!commandRemoved) {
+      commandRemoved = true;
+      continue;
+    }
+
+    output.push(arg);
+  }
+
+  return output;
+}
+
 /* v8 ignore start */
 export async function startDaemon(
-  options: { dashboard: boolean },
+  options: { dashboard: boolean; debug: boolean },
   cliArgs: string[] = process.argv.slice(2)
 ): Promise<void> {
   const config = loadConfigFromArgs(cliArgs);
   const logger = createLogger(config);
-  logger.silent = options.dashboard;
+  logger.silent = options.dashboard || !options.debug;
   const router = new NotificationRouter(config, { suppressConsole: options.dashboard });
   const pricing = await loadPricing();
   let dashboardRef: Dashboard | undefined;
