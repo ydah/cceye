@@ -60,6 +60,34 @@ describe("calculateCost", () => {
     expect(cost).toBe(2 + 8 + 18 + 32);
   });
 
+  it("applies tiered pricing for tokens above 200k", () => {
+    const pricing = createPricing(() => ({
+      inputPerMTok: 3,
+      outputPerMTok: 15,
+      cacheCreatePerMTok: 3.75,
+      cacheReadPerMTok: 0.3,
+      inputPerMTokAbove200k: 6,
+      outputPerMTokAbove200k: 22.5,
+      cacheCreatePerMTokAbove200k: 7.5,
+      cacheReadPerMTokAbove200k: 0.6,
+    }));
+    const entry = createEntry({
+      inputTokens: 300_000,
+      outputTokens: 250_000,
+      cacheCreationTokens: 300_000,
+      cacheReadTokens: 250_000,
+    });
+
+    const cost = calculateCost(entry, "calculate", pricing);
+    const expected =
+      (200_000 * 3 + 100_000 * 6) / 1_000_000 +
+      (200_000 * 15 + 50_000 * 22.5) / 1_000_000 +
+      (200_000 * 3.75 + 100_000 * 7.5) / 1_000_000 +
+      (200_000 * 0.3 + 50_000 * 0.6) / 1_000_000;
+
+    expect(cost).toBeCloseTo(expected, 8);
+  });
+
   it("returns 0 when pricing is unavailable", () => {
     const pricing = createPricing(() => null);
     expect(calculateCost(createEntry(), "calculate", pricing)).toBe(0);
