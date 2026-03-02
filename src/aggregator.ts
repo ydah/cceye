@@ -5,6 +5,7 @@ import type { UsageEntry } from "./log-parser.js";
 export interface AggregatedCost {
   total: number;
   byModel: Record<string, number>;
+  byProject: Record<string, number>;
   tokenBreakdown: {
     input: number;
     output: number;
@@ -35,6 +36,7 @@ export function aggregateByPeriod(
   const result: AggregatedCost = {
     total: 0,
     byModel: {},
+    byProject: {},
     tokenBreakdown: {
       input: 0,
       output: 0,
@@ -49,6 +51,8 @@ export function aggregateByPeriod(
     }
     const cost = entry.costUSD ?? 0;
     result.byModel[entry.model] = (result.byModel[entry.model] ?? 0) + cost;
+    const project = entry.project ?? "unknown";
+    result.byProject[project] = (result.byProject[project] ?? 0) + cost;
     result.total += cost;
     result.tokenBreakdown.input += entry.inputTokens;
     result.tokenBreakdown.output += entry.outputTokens;

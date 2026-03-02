@@ -32,6 +32,7 @@ describe("data-store", () => {
     const data = mod.createEmptyData();
     mod.updateCurrentCosts(data, { daily: 1.2, weekly: 2.3, monthly: 3.4 });
     mod.updateModelBreakdown(data, { daily: [{ model: "m1", cost: 1.2 }] });
+    mod.updateProjectBreakdown(data, { daily: [{ project: "project-a", cost: 1.2 }] });
     mod.updateHourlyTrend(data, [{ hour: new Date().toISOString(), cost: 1 }]);
     mod.addNotificationHistory(data, {
       timestamp: new Date().toISOString(),
@@ -47,6 +48,7 @@ describe("data-store", () => {
     const loaded = mod.loadData();
     expect(loaded.currentCosts.daily).toBe(1.2);
     expect(loaded.modelBreakdown.daily).toHaveLength(1);
+    expect(loaded.projectBreakdown.daily).toHaveLength(1);
     expect(loaded.notificationHistory).toHaveLength(1);
     expect(loaded.lastUpdated).toContain("2026-02-11");
   });

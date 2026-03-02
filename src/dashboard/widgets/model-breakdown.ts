@@ -1,7 +1,11 @@
 import type { ModelCost } from "../../data-store.js";
 import type { TableWidget } from "../widget-types.js";
 
-export function updateModelBreakdown(table: TableWidget, items: ModelCost[]): void {
+export function updateModelBreakdown(
+  table: TableWidget,
+  items: ModelCost[],
+  primaryColumn: "Model" | "Project" = "Model"
+): void {
   const total = items.reduce((sum, item) => sum + item.cost, 0);
   const rows = [...items]
     .sort((a, b) => b.cost - a.cost)
@@ -10,7 +14,7 @@ export function updateModelBreakdown(table: TableWidget, items: ModelCost[]): vo
       return [item.model, `$${item.cost.toFixed(2)}`, `${percent.toFixed(0)}%`];
     });
   table.setData({
-    headers: ["Model", "Cost", "%"],
+    headers: [primaryColumn, "Cost", "%"],
     data: rows,
   });
 }
