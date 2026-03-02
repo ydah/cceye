@@ -7,6 +7,7 @@ export interface UsageEntry {
   timestamp: Date;
   model: string;
   project?: string;
+  session?: string;
   inputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;

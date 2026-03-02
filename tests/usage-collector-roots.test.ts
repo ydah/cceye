@@ -113,6 +113,7 @@ describe("collectUsageEntries with multiple roots", () => {
 
     expect(entries).toHaveLength(2);
     expect(entries.map((entry) => entry.project).sort()).toEqual(["project-a", "project-a"]);
+    expect(entries.map((entry) => entry.session).sort()).toEqual(["session-one", "session-one"]);
     const daily = aggregateByPeriod(entries, "daily", "UTC");
     expect(daily.total).toBeCloseTo(0.5, 8);
     expect(daily.byProject).toEqual({ "project-a": 0.5 });

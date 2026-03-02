@@ -21,6 +21,16 @@ function extractProjectFromFile(root: string, file: string): string {
   return project && project.length > 0 ? project : "unknown";
 }
 
+function extractSessionFromFile(root: string, file: string): string {
+  const relative = path.relative(root, file);
+  const parts = relative.split(path.sep).filter((part) => part.length > 0);
+  if (parts.length >= 3) {
+    return parts[parts.length - 2] ?? "unknown";
+  }
+  const base = path.basename(file, path.extname(file));
+  return base.length > 0 ? base : "unknown";
+}
+
 export async function collectUsageEntries(
   config: Config,
   state: State,
@@ -42,6 +52,7 @@ export async function collectUsageEntries(
       const stat = fs.statSync(file);
       const key = toFileIndexKey(roots.length, rootIndex, root, file);
       const project = extractProjectFromFile(root, file);
+      const session = extractSessionFromFile(root, file);
       const { entries } = await parseSessionFile(file, 0);
       for (const entry of entries) {
         const uniqueHash =
@@ -55,6 +66,7 @@ export async function collectUsageEntries(
         const cost = calculateCost(entry, config.cost_mode, pricing);
         entry.costUSD = cost;
         entry.project = project;
+        entry.session = session;
         allEntries.push(entry);
       }
 
