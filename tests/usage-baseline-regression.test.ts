@@ -1,3 +1,4 @@
+import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -92,12 +93,15 @@ function createPricing(): ModelPricing {
 
 describe("usage baseline regression", () => {
   beforeEach(() => {
+    delete process.env.CLAUDE_CONFIG_DIR;
+    vi.spyOn(os, "homedir").mockReturnValue(path.join(process.cwd(), ".tmp-home-usage-regression"));
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-02-15T15:00:00.000Z"));
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("collects deduplicated entries from mixed logs", async () => {
