@@ -1,0 +1,4 @@
+{"timestamp":"2026-02-15T09:00:00.000Z","message":{"usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":20,"cache_read_input_tokens":10},"model":"claude-sonnet-4-20250514","id":"msg-dup"},"requestId":"req-dup","costUSD":0.99}
+{"timestamp":"2026-02-15T12:00:00.000Z","message":{"usage":{"input_tokens":50,"output_tokens":25},"id":"msg-display"},"requestId":"req-display","costUSD":0.2}
+{"timestamp":"2026-02-15T13:00:00.000Z","message":{"usage":{"input_tokens":10,"output_tokens":5},"model":"unknown-model"}}
+{"timestamp":"2026-02-15T13:05:00.000Z","message":{"usage":{"input_tokens":10,"output_tokens":5},"model":"unknown-model"}}

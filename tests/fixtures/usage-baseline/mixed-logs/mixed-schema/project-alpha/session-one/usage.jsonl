@@ -1,0 +1,5 @@
+{"timestamp":"2026-02-15T09:00:00.000Z","message":{"usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":20,"cache_read_input_tokens":10},"model":"claude-sonnet-4-20250514","id":"msg-dup"},"requestId":"req-dup","costUSD":0.99}
+{"timestamp":"2026-02-15T10:00:00.000Z","message":{"usage":{"input_tokens":200,"output_tokens":100},"model":"claude-sonnet-4-20250514","id":"msg-calc"},"requestId":"req-calc"}
+{"timestamp":"2026-02-15T11:00:00.000Z","message":{"usage":{"input_tokens":300000,"output_tokens":100000,"cache_creation_input_tokens":200000,"cache_read_input_tokens":50000},"model":"anthropic/claude-sonnet-4-20250514","id":"msg-tier"},"requestId":"req-tier"}
+{"timestamp":"2026-02-15T11:30:00.000Z","message":{"model":"claude-sonnet-4-20250514"}}
+{not-json}
