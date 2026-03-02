@@ -29,17 +29,16 @@ const pricingCacheSchema = z.object({
 
 type PriceEntry = z.infer<typeof priceEntrySchema>;
 
-const modelPriceSchema = z.object({
-  inputPerMTok: z.number(),
-  outputPerMTok: z.number(),
-  cacheCreatePerMTok: z.number(),
-  cacheReadPerMTok: z.number(),
-  inputPerMTokAbove200k: z.number().optional(),
-  outputPerMTokAbove200k: z.number().optional(),
-  cacheCreatePerMTokAbove200k: z.number().optional(),
-  cacheReadPerMTokAbove200k: z.number().optional(),
-});
-export type ModelPrice = z.infer<typeof modelPriceSchema>;
+export interface ModelPrice {
+  inputPerMTok: number;
+  outputPerMTok: number;
+  cacheCreatePerMTok: number;
+  cacheReadPerMTok: number;
+  inputPerMTokAbove200k?: number;
+  outputPerMTokAbove200k?: number;
+  cacheCreatePerMTokAbove200k?: number;
+  cacheReadPerMTokAbove200k?: number;
+}
 
 export interface ModelPricing {
   getPrice(model: string): ModelPrice | null;
@@ -84,10 +83,10 @@ function toModelPrice(entry: PriceEntry): ModelPrice {
     outputPerMTok: toPerMTok(entry.output_cost_per_token),
     cacheCreatePerMTok: toPerMTok(entry.cache_creation_input_token_cost ?? entry.cache_creation_input_cost_per_token),
     cacheReadPerMTok: toPerMTok(entry.cache_read_input_token_cost ?? entry.cache_read_input_cost_per_token),
-    ...(inputPerMTokAbove200k !== undefined ? { inputPerMTokAbove200k } : {}),
-    ...(outputPerMTokAbove200k !== undefined ? { outputPerMTokAbove200k } : {}),
-    ...(cacheCreatePerMTokAbove200k !== undefined ? { cacheCreatePerMTokAbove200k } : {}),
-    ...(cacheReadPerMTokAbove200k !== undefined ? { cacheReadPerMTokAbove200k } : {}),
+    ...(typeof inputPerMTokAbove200k === "number" ? { inputPerMTokAbove200k } : {}),
+    ...(typeof outputPerMTokAbove200k === "number" ? { outputPerMTokAbove200k } : {}),
+    ...(typeof cacheCreatePerMTokAbove200k === "number" ? { cacheCreatePerMTokAbove200k } : {}),
+    ...(typeof cacheReadPerMTokAbove200k === "number" ? { cacheReadPerMTokAbove200k } : {}),
   };
 }
 
