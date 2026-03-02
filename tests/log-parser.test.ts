@@ -187,6 +187,35 @@ describe("parseSessionFile", () => {
     });
   });
 
+  it("rejects boolean and null token values instead of coercing them", async () => {
+    tempDir = createTempDir();
+    const file = path.join(tempDir, "invalid-token-types.jsonl");
+    const booleanTokenLine = JSON.stringify({
+      timestamp: "2026-02-11T10:00:00.000Z",
+      message: {
+        usage: {
+          input_tokens: true,
+          output_tokens: 2,
+        },
+        model: "top-level-model",
+      },
+    });
+    const nullTokenLine = JSON.stringify({
+      timestamp: "2026-02-11T10:00:00.000Z",
+      message: {
+        usage: {
+          input_tokens: 1,
+          output_tokens: null,
+        },
+        model: "top-level-model",
+      },
+    });
+    fs.writeFileSync(file, `${booleanTokenLine}\n${nullTokenLine}\n`);
+
+    const { entries } = await parseSessionFile(file);
+    expect(entries).toEqual([]);
+  });
+
   it("keeps invalid cost strings as null", async () => {
     tempDir = createTempDir();
     const file = path.join(tempDir, "invalid-cost.jsonl");
