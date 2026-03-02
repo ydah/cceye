@@ -112,8 +112,10 @@ describe("collectUsageEntries with multiple roots", () => {
     });
 
     expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.project).sort()).toEqual(["project-a", "project-a"]);
     const daily = aggregateByPeriod(entries, "daily", "UTC");
     expect(daily.total).toBeCloseTo(0.5, 8);
+    expect(daily.byProject).toEqual({ "project-a": 0.5 });
 
     expect(Object.keys(state.fileIndex).sort()).toEqual([
       "0::project-a/session-one/usage.jsonl",

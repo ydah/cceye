@@ -26,15 +26,16 @@ import {
   updateCurrentCosts,
   updateHourlyTrend,
   updateModelBreakdown,
+  updateProjectBreakdown,
 } from "./data-store.js";
 import { Scheduler } from "./scheduler.js";
 import { Dashboard } from "./dashboard/index.js";
 import { loadPricing } from "./pricing.js";
 import { aggregateByPeriod } from "./aggregator.js";
 import { collectUsageEntries } from "./usage-collector.js";
-import { hourlyTrend, nextPoll, toModelBreakdown } from "./polling-metrics.js";
+import { hourlyTrend, nextPoll, toModelBreakdown, toProjectBreakdown } from "./polling-metrics.js";
 
-export { collectUsageEntries, hourlyTrend, nextPoll, toModelBreakdown };
+export { collectUsageEntries, hourlyTrend, nextPoll, toModelBreakdown, toProjectBreakdown };
 
 const daemonDebugFlags = ["--debug", "-d"];
 
@@ -305,6 +306,11 @@ export async function pollOnce(
     daily: toModelBreakdown(daily.byModel),
     weekly: toModelBreakdown(weekly.byModel),
     monthly: toModelBreakdown(monthly.byModel),
+  });
+  updateProjectBreakdown(data, {
+    daily: toProjectBreakdown(daily.byProject),
+    weekly: toProjectBreakdown(weekly.byProject),
+    monthly: toProjectBreakdown(monthly.byProject),
   });
   updateHourlyTrend(data, hourlyTrend(entries));
   markUpdated(data);

@@ -10,6 +10,11 @@ export interface ModelCost {
   cost: number;
 }
 
+export interface ProjectCost {
+  project: string;
+  cost: number;
+}
+
 export interface TrendPoint {
   hour: string;
   cost: number;
@@ -27,6 +32,7 @@ export interface NotificationHistoryEntry {
 export interface DataStoreState {
   currentCosts: Record<WindowKey, number>;
   modelBreakdown: Record<WindowKey, ModelCost[]>;
+  projectBreakdown: Record<WindowKey, ProjectCost[]>;
   hourlyTrend: TrendPoint[];
   notificationHistory: NotificationHistoryEntry[];
   lastUpdated: string | null;
@@ -38,6 +44,11 @@ const windows: WindowKey[] = ["daily", "weekly", "monthly"];
 
 const modelCostSchema = z.object({
   model: z.string(),
+  cost: z.number(),
+});
+
+const projectCostSchema = z.object({
+  project: z.string(),
   cost: z.number(),
 });
 
@@ -73,6 +84,14 @@ const dataStoreSchema = z
       })
       .partial()
       .optional(),
+    projectBreakdown: z
+      .object({
+        daily: z.array(projectCostSchema).optional(),
+        weekly: z.array(projectCostSchema).optional(),
+        monthly: z.array(projectCostSchema).optional(),
+      })
+      .partial()
+      .optional(),
     hourlyTrend: z.array(trendPointSchema).optional(),
     notificationHistory: z.array(notificationHistoryEntrySchema).optional(),
     lastUpdated: z.string().nullable().optional(),
@@ -87,6 +106,11 @@ export function createEmptyData(): DataStoreState {
       monthly: 0,
     },
     modelBreakdown: {
+      daily: [],
+      weekly: [],
+      monthly: [],
+    },
+    projectBreakdown: {
       daily: [],
       weekly: [],
       monthly: [],
@@ -124,6 +148,11 @@ export function loadData(): DataStoreState {
         weekly: parsed.modelBreakdown?.weekly ?? emptyData.modelBreakdown.weekly,
         monthly: parsed.modelBreakdown?.monthly ?? emptyData.modelBreakdown.monthly,
       },
+      projectBreakdown: {
+        daily: parsed.projectBreakdown?.daily ?? emptyData.projectBreakdown.daily,
+        weekly: parsed.projectBreakdown?.weekly ?? emptyData.projectBreakdown.weekly,
+        monthly: parsed.projectBreakdown?.monthly ?? emptyData.projectBreakdown.monthly,
+      },
       notificationHistory: parsed.notificationHistory ?? [],
       hourlyTrend: parsed.hourlyTrend ?? [],
     };
@@ -151,6 +180,17 @@ export function updateModelBreakdown(
   for (const window of windows) {
     if (breakdown[window]) {
       data.modelBreakdown[window] = breakdown[window];
+    }
+  }
+}
+
+export function updateProjectBreakdown(
+  data: DataStoreState,
+  breakdown: Partial<Record<WindowKey, ProjectCost[]>>
+): void {
+  for (const window of windows) {
+    if (breakdown[window]) {
+      data.projectBreakdown[window] = breakdown[window];
     }
   }
 }

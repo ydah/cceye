@@ -6,6 +6,7 @@ import { z } from "zod";
 export interface UsageEntry {
   timestamp: Date;
   model: string;
+  project?: string;
   inputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;

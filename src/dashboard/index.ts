@@ -12,6 +12,7 @@ type DashboardConfig = Pick<Config, "thresholds" | "timezone">;
 export class Dashboard {
   private layout = createLayout();
   private selectedWindow: "daily" | "weekly" | "monthly" = "daily";
+  private selectedDimension: "model" | "project" = "model";
   private destroyed = false;
 
   constructor() {
@@ -31,7 +32,13 @@ export class Dashboard {
   }
 
   onWindowChange(callback: (window: "daily" | "weekly" | "monthly") => void): void {
-    this.layout.screen.key(["d", "w", "m"], (_, key) => {
+    this.layout.screen.key(["d", "w", "m", "p"], (_, key) => {
+      if (key.name === "p") {
+        this.selectedDimension = this.selectedDimension === "model" ? "project" : "model";
+        callback(this.selectedWindow);
+        return;
+      }
+
       const selected = key.name === "d" ? "daily" : key.name === "w" ? "weekly" : "monthly";
       this.selectedWindow = selected;
       callback(selected);
@@ -47,7 +54,15 @@ export class Dashboard {
   ): void {
     renderCostProgress(this.layout.costBox, data.currentCosts, config);
     updateHourlyTrend(this.layout.trendLine, data.hourlyTrend);
-    updateModelBreakdown(this.layout.modelTable, data.modelBreakdown[this.selectedWindow]);
+    const isModelView = this.selectedDimension === "model";
+    const breakdownLabel = isModelView ? " Breakdown (Model) " : " Breakdown (Project) ";
+    const primaryColumn = isModelView ? "Model" : "Project";
+    const breakdownData = isModelView
+      ? data.modelBreakdown[this.selectedWindow]
+      : data.projectBreakdown[this.selectedWindow].map((item) => ({ model: item.project, cost: item.cost }));
+
+    this.layout.modelTable.setLabel?.(breakdownLabel);
+    updateModelBreakdown(this.layout.modelTable, breakdownData, primaryColumn);
     updateNotificationLog(this.layout.notificationLog, data.notificationHistory, config.timezone);
     updateStatusBar(this.layout.statusBar, lastUpdated, nextPoll, statusMessage);
     this.layout.screen.render();

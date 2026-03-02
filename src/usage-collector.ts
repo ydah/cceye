@@ -15,6 +15,12 @@ function toFileIndexKey(rootCount: number, rootIndex: number, root: string, file
   return `${rootIndex}::${relative}`;
 }
 
+function extractProjectFromFile(root: string, file: string): string {
+  const relative = path.relative(root, file);
+  const [project] = relative.split(path.sep);
+  return project && project.length > 0 ? project : "unknown";
+}
+
 export async function collectUsageEntries(
   config: Config,
   state: State,
@@ -35,6 +41,7 @@ export async function collectUsageEntries(
     for (const file of files) {
       const stat = fs.statSync(file);
       const key = toFileIndexKey(roots.length, rootIndex, root, file);
+      const project = extractProjectFromFile(root, file);
       const { entries } = await parseSessionFile(file, 0);
       for (const entry of entries) {
         const uniqueHash =
@@ -47,6 +54,7 @@ export async function collectUsageEntries(
         }
         const cost = calculateCost(entry, config.cost_mode, pricing);
         entry.costUSD = cost;
+        entry.project = project;
         allEntries.push(entry);
       }
 
