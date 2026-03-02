@@ -29,16 +29,17 @@ const pricingCacheSchema = z.object({
 
 type PriceEntry = z.infer<typeof priceEntrySchema>;
 
-export interface ModelPrice {
-  inputPerMTok: number;
-  outputPerMTok: number;
-  cacheCreatePerMTok: number;
-  cacheReadPerMTok: number;
-  inputPerMTokAbove200k?: number;
-  outputPerMTokAbove200k?: number;
-  cacheCreatePerMTokAbove200k?: number;
-  cacheReadPerMTokAbove200k?: number;
-}
+const modelPriceSchema = z.object({
+  inputPerMTok: z.number(),
+  outputPerMTok: z.number(),
+  cacheCreatePerMTok: z.number(),
+  cacheReadPerMTok: z.number(),
+  inputPerMTokAbove200k: z.number().optional(),
+  outputPerMTokAbove200k: z.number().optional(),
+  cacheCreatePerMTokAbove200k: z.number().optional(),
+  cacheReadPerMTokAbove200k: z.number().optional(),
+});
+export type ModelPrice = z.infer<typeof modelPriceSchema>;
 
 export interface ModelPricing {
   getPrice(model: string): ModelPrice | null;
@@ -78,7 +79,6 @@ function toModelPrice(entry: PriceEntry): ModelPrice {
   const cacheReadPerMTokAbove200k = toPerMTokOptional(
     entry.cache_read_input_token_cost_above_200k_tokens ?? entry.cache_read_input_cost_per_token_above_200k_tokens
   );
-
   return {
     inputPerMTok: toPerMTok(entry.input_cost_per_token),
     outputPerMTok: toPerMTok(entry.output_cost_per_token),

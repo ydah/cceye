@@ -275,7 +275,6 @@ describe("loadPricing", () => {
       cacheReadPerMTok: 1.5,
     });
   });
-
   it("maps tiered 200k pricing fields", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
