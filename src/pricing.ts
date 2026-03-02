@@ -78,16 +78,15 @@ function toModelPrice(entry: PriceEntry): ModelPrice {
   const cacheReadPerMTokAbove200k = toPerMTokOptional(
     entry.cache_read_input_token_cost_above_200k_tokens ?? entry.cache_read_input_cost_per_token_above_200k_tokens
   );
-
   return {
     inputPerMTok: toPerMTok(entry.input_cost_per_token),
     outputPerMTok: toPerMTok(entry.output_cost_per_token),
     cacheCreatePerMTok: toPerMTok(entry.cache_creation_input_token_cost ?? entry.cache_creation_input_cost_per_token),
     cacheReadPerMTok: toPerMTok(entry.cache_read_input_token_cost ?? entry.cache_read_input_cost_per_token),
-    ...(inputPerMTokAbove200k !== undefined ? { inputPerMTokAbove200k } : {}),
-    ...(outputPerMTokAbove200k !== undefined ? { outputPerMTokAbove200k } : {}),
-    ...(cacheCreatePerMTokAbove200k !== undefined ? { cacheCreatePerMTokAbove200k } : {}),
-    ...(cacheReadPerMTokAbove200k !== undefined ? { cacheReadPerMTokAbove200k } : {}),
+    ...(typeof inputPerMTokAbove200k === "number" ? { inputPerMTokAbove200k } : {}),
+    ...(typeof outputPerMTokAbove200k === "number" ? { outputPerMTokAbove200k } : {}),
+    ...(typeof cacheCreatePerMTokAbove200k === "number" ? { cacheCreatePerMTokAbove200k } : {}),
+    ...(typeof cacheReadPerMTokAbove200k === "number" ? { cacheReadPerMTokAbove200k } : {}),
   };
 }
 

@@ -67,6 +67,14 @@ describe("parseSessionFile", () => {
       timestamp: "2026-02-11T10:00:00.000Z",
       message: { usage: { input_tokens: "x", output_tokens: 1 }, model: "claude-sonnet-4-5-20250929" },
     });
+    const booleanTokenLine = JSON.stringify({
+      timestamp: "2026-02-11T10:00:00.000Z",
+      message: { usage: { input_tokens: true, output_tokens: 1 }, model: "claude-sonnet-4-5-20250929" },
+    });
+    const nullTokenLine = JSON.stringify({
+      timestamp: "2026-02-11T10:00:00.000Z",
+      message: { usage: { input_tokens: null, output_tokens: 1 }, model: "claude-sonnet-4-5-20250929" },
+    });
     const invalidTimestampLine = JSON.stringify({
       timestamp: "not-a-date",
       message: { usage: { input_tokens: 1, output_tokens: 1 }, model: "claude-sonnet-4-5-20250929" },
@@ -78,7 +86,16 @@ describe("parseSessionFile", () => {
 
     fs.writeFileSync(
       file,
-      [validLine, invalidUsageLine, invalidTimestampLine, noUsageLine, "{not-json}", ""].join("\n")
+      [
+        validLine,
+        invalidUsageLine,
+        booleanTokenLine,
+        nullTokenLine,
+        invalidTimestampLine,
+        noUsageLine,
+        "{not-json}",
+        "",
+      ].join("\n")
     );
 
     const { entries, parsedBytes } = await parseSessionFile(file);
@@ -136,7 +153,87 @@ describe("parseSessionFile", () => {
       model: "unknown",
       messageId: null,
       requestId: null,
-      costUSD: null,
+      costUSD: 1.23,
     });
+  });
+
+  it("supports numeric string tokens and top-level model fallback", async () => {
+    tempDir = createTempDir();
+    const file = path.join(tempDir, "string-numbers.jsonl");
+    const line = JSON.stringify({
+      timestamp: "2026-02-11T10:00:00.000Z",
+      model: "top-level-model",
+      message: {
+        usage: {
+          input_tokens: "10",
+          output_tokens: "20",
+          cache_creation_input_tokens: "30",
+          cache_read_input_tokens: "40",
+        },
+      },
+      costUSD: "0.15",
+    });
+    fs.writeFileSync(file, `${line}\n`);
+
+    const { entries } = await parseSessionFile(file);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      model: "top-level-model",
+      inputTokens: 10,
+      outputTokens: 20,
+      cacheCreationTokens: 30,
+      cacheReadTokens: 40,
+      costUSD: 0.15,
+    });
+  });
+
+  it("rejects boolean and null token values instead of coercing them", async () => {
+    tempDir = createTempDir();
+    const file = path.join(tempDir, "invalid-token-types.jsonl");
+    const booleanTokenLine = JSON.stringify({
+      timestamp: "2026-02-11T10:00:00.000Z",
+      message: {
+        usage: {
+          input_tokens: true,
+          output_tokens: 2,
+        },
+        model: "top-level-model",
+      },
+    });
+    const nullTokenLine = JSON.stringify({
+      timestamp: "2026-02-11T10:00:00.000Z",
+      message: {
+        usage: {
+          input_tokens: 1,
+          output_tokens: null,
+        },
+        model: "top-level-model",
+      },
+    });
+    fs.writeFileSync(file, `${booleanTokenLine}\n${nullTokenLine}\n`);
+
+    const { entries } = await parseSessionFile(file);
+    expect(entries).toEqual([]);
+  });
+
+  it("keeps invalid cost strings as null", async () => {
+    tempDir = createTempDir();
+    const file = path.join(tempDir, "invalid-cost.jsonl");
+    const invalidStringCostLine = JSON.stringify({
+      timestamp: "2026-02-11T10:00:00.000Z",
+      message: { usage: { input_tokens: 1, output_tokens: 2 }, model: "claude-sonnet-4-5-20250929" },
+      costUSD: "not-a-number",
+    });
+    const blankStringCostLine = JSON.stringify({
+      timestamp: "2026-02-11T10:01:00.000Z",
+      message: { usage: { input_tokens: 3, output_tokens: 4 }, model: "claude-sonnet-4-5-20250929" },
+      costUSD: "   ",
+    });
+    fs.writeFileSync(file, `${invalidStringCostLine}\n${blankStringCostLine}\n`);
+
+    const { entries } = await parseSessionFile(file);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.costUSD).toBeNull();
+    expect(entries[1]?.costUSD).toBeNull();
   });
 });
