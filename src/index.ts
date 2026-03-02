@@ -34,7 +34,7 @@ import { loadPricing } from "./pricing.js";
 import { aggregateByPeriod } from "./aggregator.js";
 import { collectUsageEntries } from "./usage-collector.js";
 import { hourlyTrend, nextPoll, toModelBreakdown, toProjectBreakdown } from "./polling-metrics.js";
-import { buildReportRows, printReportRows, type ReportCommand } from "./reporting.js";
+import { buildReportRows, printReportRows, type ReportCommand, type ReportOptions } from "./reporting.js";
 
 export { collectUsageEntries, hourlyTrend, nextPoll, toModelBreakdown, toProjectBreakdown };
 
@@ -399,21 +399,20 @@ export async function showReport(command: ReportCommand, cliArgs: string[] = pro
   const logger = createLogger(config);
   const entries = await collectUsageEntries(config, state, pricing, logger);
 
-  const rows = buildReportRows(entries, command, {
-    since,
-    until,
+  const reportOptions: ReportOptions = {
     json,
     breakdown,
     timezone: reportTimezone ?? config.timezone,
-  });
+  };
+  if (since !== undefined) {
+    reportOptions.since = since;
+  }
+  if (until !== undefined) {
+    reportOptions.until = until;
+  }
 
-  printReportRows(rows, {
-    since,
-    until,
-    json,
-    breakdown,
-    timezone: reportTimezone ?? config.timezone,
-  });
+  const rows = buildReportRows(entries, command, reportOptions);
+  printReportRows(rows, reportOptions);
 }
 
 export async function initConfig(): Promise<void> {
