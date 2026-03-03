@@ -47,7 +47,15 @@ export interface ModelPricing {
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const PRICING_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
-const providerPrefixes = ["anthropic/", "openrouter/openai/", "openai/", "azure/"] as const;
+const providerPrefixes = [
+  "anthropic/",
+  "claude-3-5-",
+  "claude-3-",
+  "claude-",
+  "openrouter/openai/",
+  "openai/",
+  "azure/",
+] as const;
 
 const fallbackPrices: Record<string, { input: number; output: number; cacheCreate: number; cacheRead: number }> = {
   "claude-sonnet-4-20250514": { input: 3.0, output: 15.0, cacheCreate: 3.75, cacheRead: 0.3 },
@@ -124,6 +132,9 @@ function findEntry(data: Record<string, PriceEntry>, model: string): PriceEntry 
   const normalized = normalizeModel(model);
   for (const [key, value] of Object.entries(data)) {
     if (key.includes(normalized)) {
+      return value;
+    }
+    if (normalized.includes(key) && (key.includes("-") || key.includes("/"))) {
       return value;
     }
   }

@@ -44,7 +44,7 @@ describe("resolveClaudeDataRoots", () => {
   it("throws when CLAUDE_CONFIG_DIR is set but invalid", () => {
     process.env.CLAUDE_CONFIG_DIR = path.join(tempRoot, "missing");
     expect(() => resolveClaudeDataRoots("~/ignored/projects")).toThrow(
-      "expected an existing 'projects' directory"
+      "no valid Claude data directories found in CLAUDE_CONFIG_DIR"
     );
   });
 

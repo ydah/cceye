@@ -1,4 +1,10 @@
-# Claude Code data directory (default: ~/.claude/projects)
+# Claude Code data directory fallback (~ expansion supported).
+# Additional roots may be auto-discovered from:
+# - ~/.config/claude/projects
+# - ~/.claude/projects
+# If CLAUDE_CONFIG_DIR is set, those roots are used exclusively. Invalid
+# CLAUDE_CONFIG_DIR values cause an immediate error and do not fall back to
+# claude_data_dir (see README for details).
 claude_data_dir: "~/.claude/projects"
 
 # Polling interval (milliseconds)

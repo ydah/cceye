@@ -26,7 +26,14 @@
 
 ### Claude Usage Log Parsing
 
-Read Claude Code JSONL session logs from your local `claude_data_dir`, recursively scanning all projects and extracting usage from `message.usage`.
+Read Claude Code JSONL session logs from your local data directories, recursively scanning all projects and extracting usage from `message.usage`.
+
+Data roots are discovered in this order:
+- `CLAUDE_CONFIG_DIR` (comma-separated directories, highest priority)
+- `claude_data_dir` from config
+- auto-discovered defaults (`~/.config/claude/projects`, `~/.claude/projects`)
+
+Note: When `CLAUDE_CONFIG_DIR` is set, it overrides all other roots and must resolve to at least one existing `projects/` directory. If none of the configured directories contain `projects/`, cceye errors instead of falling back to `claude_data_dir` or auto-discovered defaults.
 
 ### Cost Tracking Modes
 
@@ -49,7 +56,17 @@ Send alerts to:
 
 ### Live Dashboard (TUI)
 
-Track current costs, hourly trend, model breakdown, and notification history in a keyboard-driven terminal dashboard.
+Track current costs, hourly trend, model/project breakdown, and notification history in a keyboard-driven terminal dashboard.
+
+### Usage Reports
+
+Generate report snapshots with:
+- `daily`
+- `weekly`
+- `monthly`
+- `session`
+
+Each report supports date filters and JSON output options.
 
 ### Smart Pricing Cache
 
@@ -146,6 +163,10 @@ Commands:
   -d         Alias for --debug
   dashboard  Start TUI dashboard mode
   status     Run one poll cycle and print current totals (no notifications)
+  daily      Print daily usage report
+  weekly     Print weekly usage report
+  monthly    Print monthly usage report
+  session    Print session usage report
   init       Interactive config generator
   install    Install macOS LaunchAgent
   uninstall  Remove macOS LaunchAgent
@@ -153,6 +174,13 @@ Commands:
 
 #### Notes
 - Any command accepts `--config <path>`.
+- Report commands support:
+  - `--since YYYYMMDD`
+  - `--until YYYYMMDD`
+  - `--json`
+  - `--breakdown`
+  - `--timezone <IANA TZ>`
+  - `--offline`
 - If not installed globally, run commands with `npx cceye <command>`.
 - Starting with no arguments (`cceye`) clears notification cooldown flags once before daemon startup.
 
@@ -172,7 +200,7 @@ See `config.example.yaml` for a complete template.
 
 | Field | Description |
 |------|-------------|
-| `claude_data_dir` | Root directory containing Claude JSONL logs (`~` expansion supported) |
+| `claude_data_dir` | Fallback root directory containing Claude JSONL logs (`~` expansion supported) |
 | `polling_interval_milliseconds` | Polling interval in milliseconds (`>= 1`) |
 | `timezone` | Timezone used for daily/weekly/monthly window boundaries |
 | `cost_mode` | `auto`, `calculate`, or `display` |
@@ -200,6 +228,7 @@ See `config.example.yaml` for a complete template.
 
 | Variable | Description |
 |----------|-------------|
+| `CLAUDE_CONFIG_DIR` | Comma-separated Claude config roots; each must contain `projects/` |
 | `CCEYE_SLACK_WEBHOOK_URL` | Fills Slack webhook when Slack is enabled and URL is missing in config |
 | `CCEYE_SMTP_PASS` | Fills SMTP password when email is enabled and password is missing in config |
 
@@ -211,9 +240,10 @@ See `config.example.yaml` for a complete template.
 |-----|--------|
 | `q` / `Ctrl-C` | Quit dashboard |
 | `r` | Trigger refresh immediately |
-| `d` | Switch model breakdown window to daily |
-| `w` | Switch model breakdown window to weekly |
-| `m` | Switch model breakdown window to monthly |
+| `d` | Switch breakdown window to daily (current target) |
+| `w` | Switch breakdown window to weekly (current target) |
+| `m` | Switch breakdown window to monthly (current target) |
+| `p` | Toggle breakdown target (model / project) |
 | `Tab` | Move focus to next panel |
 | `↑` / `↓` | Scroll notification log |
 
@@ -276,7 +306,13 @@ Create `~/.config/cceye/config.yaml` or pass `--config` explicitly.
 
 ### `no session logs found`
 
-Verify `claude_data_dir` points to your Claude project logs.
+Verify the following, depending on your environment:
+- If `CLAUDE_CONFIG_DIR` is set: ensure its paths exist and contain Claude session logs, or unset it.
+- Otherwise, ensure either:
+  - `claude_data_dir` points to Claude session logs, or
+  - one default path exists and contains logs:
+    - `~/.config/claude/projects`
+    - `~/.claude/projects`
 
 ### Slack or Email config errors
 
@@ -298,6 +334,18 @@ npm test
 npm run test:coverage
 npm run build
 ```
+
+## Migration Notes
+
+- Existing config files remain valid.
+- Path resolution is now more flexible:
+  - If `CLAUDE_CONFIG_DIR` is set, those paths are used exclusively.
+  - Otherwise, `claude_data_dir` is used, with auto-discovered defaults appended when available.
+- New report commands are available:
+  - `cceye daily`
+  - `cceye weekly`
+  - `cceye monthly`
+  - `cceye session`
 
 ## License
 
