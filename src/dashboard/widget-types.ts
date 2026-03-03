@@ -14,6 +14,7 @@ export interface LineChartWidget {
 
 export interface TableWidget {
   focus(): void;
+  setLabel?(label: string): void;
   setData(data: {
     headers: string[];
     data: string[][];

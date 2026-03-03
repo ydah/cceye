@@ -6,6 +6,8 @@ import { z } from "zod";
 export interface UsageEntry {
   timestamp: Date;
   model: string;
+  project?: string;
+  session?: string;
   inputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;
@@ -23,16 +25,31 @@ export interface FileIndexEntry {
 
 const usageSchema = z
   .object({
-    input_tokens: z.number(),
-    output_tokens: z.number(),
-    cache_creation_input_tokens: z.number().optional(),
-    cache_read_input_tokens: z.number().optional(),
+    input_tokens: z.preprocess(toTokenNumber, z.number()),
+    output_tokens: z.preprocess(toTokenNumber, z.number()),
+    cache_creation_input_tokens: z.preprocess(toTokenNumber, z.number()).optional(),
+    cache_read_input_tokens: z.preprocess(toTokenNumber, z.number()).optional(),
   })
   .passthrough();
+
+function toTokenNumber(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return value;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : value;
+}
 
 const sessionLineSchema = z
   .object({
     timestamp: z.string(),
+    model: z.unknown().optional(),
     message: z
       .object({
         usage: usageSchema.optional(),
@@ -45,6 +62,21 @@ const sessionLineSchema = z
     costUSD: z.unknown().optional(),
   })
   .passthrough();
+
+function toOptionalNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
 
 export async function scanSessionFiles(rootDir: string): Promise<string[]> {
   const results: string[] = [];
@@ -113,14 +145,19 @@ export async function parseSessionFile(
 
       entries.push({
         timestamp,
-        model: typeof parsed.message?.model === "string" ? parsed.message.model : "unknown",
+        model:
+          typeof parsed.message?.model === "string"
+            ? parsed.message.model
+            : typeof parsed.model === "string"
+              ? parsed.model
+              : "unknown",
         inputTokens: usage.input_tokens,
         outputTokens: usage.output_tokens,
         cacheCreationTokens: totalCacheCreation,
         cacheReadTokens,
         messageId: typeof parsed.message?.id === "string" ? parsed.message.id : null,
         requestId: typeof parsed.requestId === "string" ? parsed.requestId : null,
-        costUSD: typeof parsed.costUSD === "number" ? parsed.costUSD : null,
+        costUSD: toOptionalNumber(parsed.costUSD),
       });
     } catch {
       continue;

@@ -41,7 +41,7 @@ export function createLayout(): DashboardLayout {
   });
 
   const modelTable = grid.set<TableWidget>(6, 0, 5, 6, contrib.table, {
-    label: " Model Breakdown ",
+    label: " Breakdown ",
     border: { type: "line" },
     style: { border: { fg: theme.colors.border } },
     columnSpacing: 2,

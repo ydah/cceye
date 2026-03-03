@@ -6,8 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 interface LiteLLMPrice {
   input_cost_per_token?: number;
   output_cost_per_token?: number;
+  input_cost_per_token_above_200k_tokens?: number;
+  output_cost_per_token_above_200k_tokens?: number;
   cache_creation_input_token_cost?: number;
+  cache_creation_input_token_cost_above_200k_tokens?: number;
   cache_read_input_token_cost?: number;
+  cache_read_input_token_cost_above_200k_tokens?: number;
 }
 
 function cachePathFor(homeDir: string): string {
@@ -191,6 +195,117 @@ describe("loadPricing", () => {
       outputPerMTok: 0,
       cacheCreatePerMTok: 2,
       cacheReadPerMTok: 3,
+    });
+  });
+
+  it("resolves provider-prefixed model names from unprefixed pricing keys", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        "claude-sonnet-4-5-20250929": {
+          input_cost_per_token: 0.000003,
+          output_cost_per_token: 0.000015,
+          cache_creation_input_token_cost: 0.00000375,
+          cache_read_input_token_cost: 0.0000003,
+        },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { loadPricing } = await import("../src/pricing.ts");
+    const pricing = await loadPricing();
+    const resolved = pricing.getPrice("anthropic/claude-sonnet-4-5-20250929");
+
+    expect(resolved).toMatchObject({
+      inputPerMTok: 3,
+      outputPerMTok: 15,
+      cacheCreatePerMTok: 3.75,
+      cacheReadPerMTok: 0.3,
+    });
+  });
+
+  it("resolves unprefixed model names from provider-prefixed pricing keys", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        "anthropic/claude-sonnet-4-5-20250929": {
+          input_cost_per_token: 0.000003,
+          output_cost_per_token: 0.000015,
+          cache_creation_input_token_cost: 0.00000375,
+          cache_read_input_token_cost: 0.0000003,
+        },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { loadPricing } = await import("../src/pricing.ts");
+    const pricing = await loadPricing();
+    const resolved = pricing.getPrice("claude-sonnet-4-5-20250929");
+
+    expect(resolved).toMatchObject({
+      inputPerMTok: 3,
+      outputPerMTok: 15,
+      cacheCreatePerMTok: 3.75,
+      cacheReadPerMTok: 0.3,
+    });
+  });
+
+  it("does not match generic substring keys in fetched pricing data", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        opus: {
+          input_cost_per_token: 0.000001,
+          output_cost_per_token: 0.000002,
+          cache_creation_input_token_cost: 0.000003,
+          cache_read_input_token_cost: 0.000004,
+        },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { loadPricing } = await import("../src/pricing.ts");
+    const pricing = await loadPricing();
+    const resolved = pricing.getPrice("claude-opus-4-5-20250901");
+
+    expect(resolved).toMatchObject({
+      inputPerMTok: 15,
+      outputPerMTok: 75,
+      cacheCreatePerMTok: 18.75,
+      cacheReadPerMTok: 1.5,
+    });
+  });
+  it("maps tiered 200k pricing fields", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        "claude-sonnet-4-5-20250929": {
+          input_cost_per_token: 0.000003,
+          output_cost_per_token: 0.000015,
+          cache_creation_input_token_cost: 0.00000375,
+          cache_read_input_token_cost: 0.0000003,
+          input_cost_per_token_above_200k_tokens: 0.000006,
+          output_cost_per_token_above_200k_tokens: 0.0000225,
+          cache_creation_input_token_cost_above_200k_tokens: 0.0000075,
+          cache_read_input_token_cost_above_200k_tokens: 0.0000006,
+        },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { loadPricing } = await import("../src/pricing.ts");
+    const pricing = await loadPricing();
+    const sonnet = pricing.getPrice("claude-sonnet-4-5-20250929");
+
+    expect(sonnet).toMatchObject({
+      inputPerMTok: 3,
+      outputPerMTok: 15,
+      cacheCreatePerMTok: 3.75,
+      cacheReadPerMTok: 0.3,
+      inputPerMTokAbove200k: 6,
+      outputPerMTokAbove200k: 22.5,
+      cacheCreatePerMTokAbove200k: 7.5,
+      cacheReadPerMTokAbove200k: 0.6,
     });
   });
 

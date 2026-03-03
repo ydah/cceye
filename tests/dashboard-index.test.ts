@@ -21,6 +21,7 @@ describe("Dashboard class", () => {
         resizeHandlers.push(handler);
       }
     });
+    const setLabel = vi.fn();
     const layout = {
       screen: {
         key,
@@ -31,7 +32,7 @@ describe("Dashboard class", () => {
       },
       costBox: { focus: vi.fn() },
       trendLine: { focus: vi.fn() },
-      modelTable: { focus: vi.fn() },
+      modelTable: { focus: vi.fn(), setLabel },
       notificationLog: { focus: vi.fn(), scroll: vi.fn() },
       statusBar: {},
     };
@@ -77,8 +78,10 @@ describe("Dashboard class", () => {
     windowHandler?.(null, { name: "w" });
     windowHandler?.(null, { name: "d" });
     windowHandler?.(null, { name: "m" });
+    windowHandler?.(null, { name: "p" });
     expect(onWindowChange).toHaveBeenCalledWith("weekly");
     expect(onWindowChange).toHaveBeenCalledWith("daily");
+    expect(onWindowChange).toHaveBeenCalledWith("monthly");
     expect(onWindowChange).toHaveBeenCalledWith("monthly");
 
     layout.screen.focused = layout.costBox;
@@ -100,6 +103,7 @@ describe("Dashboard class", () => {
       {
         currentCosts: { daily: 1, weekly: 2, monthly: 3 },
         modelBreakdown: { daily: [], weekly: [{ model: "w", cost: 1 }], monthly: [{ model: "m", cost: 2 }] },
+        projectBreakdown: { daily: [], weekly: [{ project: "p-w", cost: 1 }], monthly: [{ project: "p-m", cost: 2 }] },
         hourlyTrend: [],
         notificationHistory: [],
         lastUpdated: null,
@@ -112,7 +116,7 @@ describe("Dashboard class", () => {
 
     expect(renderCostProgress).toHaveBeenCalledTimes(1);
     expect(updateHourlyTrend).toHaveBeenCalledTimes(1);
-    expect(updateModelBreakdown).toHaveBeenCalledWith(layout.modelTable, [{ model: "m", cost: 2 }]);
+    expect(updateModelBreakdown).toHaveBeenCalledWith(layout.modelTable, [{ model: "p-m", cost: 2 }], "Project");
     expect(updateNotificationLog).toHaveBeenCalledWith(layout.notificationLog, [], "Asia/Tokyo");
     expect(updateStatusBar).toHaveBeenCalledTimes(1);
     expect(layout.screen.render).toHaveBeenCalledTimes(2);

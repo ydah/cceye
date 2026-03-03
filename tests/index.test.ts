@@ -167,6 +167,29 @@ describe("index.ts", () => {
     expect(data.currentCosts.monthly).toBeCloseTo(0.00594, 8);
   });
 
+  it("runs daily report command with json output", async () => {
+    const index = await import("../src/index.ts");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await expect(
+      index.main([
+        "daily",
+        "--json",
+        "--since",
+        "20260101",
+        "--until",
+        "20261231",
+        "--offline",
+        "--config",
+        configPath,
+      ])
+    ).resolves.toBeUndefined();
+
+    const payload = String(logSpy.mock.calls[0]?.[0] ?? "");
+    expect(payload).toContain('"key"');
+    expect(payload).toContain('"totalCost"');
+  });
+
   it("accepts --config before command", async () => {
     const index = await import("../src/index.ts");
     await expect(index.main(["--config", configPath, "status"])).resolves.toBeUndefined();
@@ -285,6 +308,10 @@ describe("index.ts", () => {
     expect(index.toModelBreakdown({ a: 1, b: 2 })).toEqual([
       { model: "a", cost: 1 },
       { model: "b", cost: 2 },
+    ]);
+    expect(index.toProjectBreakdown({ p1: 1, p2: 2 })).toEqual([
+      { project: "p1", cost: 1 },
+      { project: "p2", cost: 2 },
     ]);
 
     const poll = index.nextPoll(5000);

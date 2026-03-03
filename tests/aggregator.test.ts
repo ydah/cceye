@@ -6,6 +6,7 @@ function entry(overrides: Partial<UsageEntry>): UsageEntry {
   return {
     timestamp: new Date("2026-02-11T10:00:00.000Z"),
     model: "m1",
+    project: "project-default",
     inputTokens: 1,
     outputTokens: 2,
     cacheCreationTokens: 3,
@@ -26,6 +27,7 @@ describe("aggregateByPeriod", () => {
       entry({
         timestamp: new Date("2026-02-11T11:00:00.000Z"),
         model: "sonnet",
+        project: "project-a",
         costUSD: 1.2,
         inputTokens: 10,
         outputTokens: 20,
@@ -35,6 +37,7 @@ describe("aggregateByPeriod", () => {
       entry({
         timestamp: new Date("2026-02-10T11:00:00.000Z"),
         model: "haiku",
+        project: "project-b",
         costUSD: 2.3,
         inputTokens: 5,
         outputTokens: 6,
@@ -51,6 +54,7 @@ describe("aggregateByPeriod", () => {
     const daily = aggregateByPeriod(entries, "daily", "UTC");
     expect(daily.total).toBeCloseTo(1.2, 8);
     expect(daily.byModel).toEqual({ sonnet: 1.2 });
+    expect(daily.byProject).toEqual({ "project-a": 1.2 });
     expect(daily.tokenBreakdown).toEqual({
       input: 10,
       output: 20,
@@ -61,6 +65,7 @@ describe("aggregateByPeriod", () => {
     const weekly = aggregateByPeriod(entries, "weekly", "UTC");
     expect(weekly.total).toBeCloseTo(3.5, 8);
     expect(weekly.byModel).toEqual({ sonnet: 1.2, haiku: 2.3 });
+    expect(weekly.byProject).toEqual({ "project-a": 1.2, "project-b": 2.3 });
 
     const monthly = aggregateByPeriod(entries, "monthly", "UTC");
     expect(monthly.total).toBeCloseTo(3.5, 8);
@@ -77,6 +82,7 @@ describe("aggregateByPeriod", () => {
         entry({
           timestamp: new Date("2026-02-11T10:00:00.000Z"),
           model: "m",
+          project: "project-c",
           costUSD: null,
           inputTokens: 3,
           outputTokens: 4,
@@ -90,6 +96,7 @@ describe("aggregateByPeriod", () => {
 
     expect(result.total).toBe(0);
     expect(result.byModel).toEqual({ m: 0 });
+    expect(result.byProject).toEqual({ "project-c": 0 });
     expect(result.tokenBreakdown).toEqual({
       input: 3,
       output: 4,

@@ -7,10 +7,16 @@ const priceEntrySchema = z
   .object({
     input_cost_per_token: z.number().optional(),
     output_cost_per_token: z.number().optional(),
+    input_cost_per_token_above_200k_tokens: z.number().optional(),
+    output_cost_per_token_above_200k_tokens: z.number().optional(),
     cache_creation_input_cost_per_token: z.number().optional(),
     cache_creation_input_token_cost: z.number().optional(),
+    cache_creation_input_cost_per_token_above_200k_tokens: z.number().optional(),
+    cache_creation_input_token_cost_above_200k_tokens: z.number().optional(),
     cache_read_input_cost_per_token: z.number().optional(),
     cache_read_input_token_cost: z.number().optional(),
+    cache_read_input_cost_per_token_above_200k_tokens: z.number().optional(),
+    cache_read_input_token_cost_above_200k_tokens: z.number().optional(),
   })
   .passthrough();
 
@@ -23,18 +29,33 @@ const pricingCacheSchema = z.object({
 
 type PriceEntry = z.infer<typeof priceEntrySchema>;
 
+export interface ModelPrice {
+  inputPerMTok: number;
+  outputPerMTok: number;
+  cacheCreatePerMTok: number;
+  cacheReadPerMTok: number;
+  inputPerMTokAbove200k?: number;
+  outputPerMTokAbove200k?: number;
+  cacheCreatePerMTokAbove200k?: number;
+  cacheReadPerMTokAbove200k?: number;
+}
+
 export interface ModelPricing {
-  getPrice(model: string): {
-    inputPerMTok: number;
-    outputPerMTok: number;
-    cacheCreatePerMTok: number;
-    cacheReadPerMTok: number;
-  } | null;
+  getPrice(model: string): ModelPrice | null;
 }
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const PRICING_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+const providerPrefixes = [
+  "anthropic/",
+  "claude-3-5-",
+  "claude-3-",
+  "claude-",
+  "openrouter/openai/",
+  "openai/",
+  "azure/",
+] as const;
 
 const fallbackPrices: Record<string, { input: number; output: number; cacheCreate: number; cacheRead: number }> = {
   "claude-sonnet-4-20250514": { input: 3.0, output: 15.0, cacheCreate: 3.75, cacheRead: 0.3 },
@@ -43,6 +64,94 @@ const fallbackPrices: Record<string, { input: number; output: number; cacheCreat
   "claude-opus-4-5-20250901": { input: 15.0, output: 75.0, cacheCreate: 18.75, cacheRead: 1.5 },
   "claude-opus-4-5-20251101": { input: 5.0, output: 25.0, cacheCreate: 6.25, cacheRead: 0.5 },
 };
+
+function toPerMTok(value?: number): number {
+  return (value ?? 0) * 1_000_000;
+}
+
+function toPerMTokOptional(value?: number): number | undefined {
+  if (typeof value !== "number") {
+    return undefined;
+  }
+  return value * 1_000_000;
+}
+
+function toModelPrice(entry: PriceEntry): ModelPrice {
+  const inputPerMTokAbove200k = toPerMTokOptional(entry.input_cost_per_token_above_200k_tokens);
+  const outputPerMTokAbove200k = toPerMTokOptional(entry.output_cost_per_token_above_200k_tokens);
+  const cacheCreatePerMTokAbove200k = toPerMTokOptional(
+    entry.cache_creation_input_token_cost_above_200k_tokens ??
+      entry.cache_creation_input_cost_per_token_above_200k_tokens
+  );
+  const cacheReadPerMTokAbove200k = toPerMTokOptional(
+    entry.cache_read_input_token_cost_above_200k_tokens ?? entry.cache_read_input_cost_per_token_above_200k_tokens
+  );
+  return {
+    inputPerMTok: toPerMTok(entry.input_cost_per_token),
+    outputPerMTok: toPerMTok(entry.output_cost_per_token),
+    cacheCreatePerMTok: toPerMTok(entry.cache_creation_input_token_cost ?? entry.cache_creation_input_cost_per_token),
+    cacheReadPerMTok: toPerMTok(entry.cache_read_input_token_cost ?? entry.cache_read_input_cost_per_token),
+    ...(typeof inputPerMTokAbove200k === "number" ? { inputPerMTokAbove200k } : {}),
+    ...(typeof outputPerMTokAbove200k === "number" ? { outputPerMTokAbove200k } : {}),
+    ...(typeof cacheCreatePerMTokAbove200k === "number" ? { cacheCreatePerMTokAbove200k } : {}),
+    ...(typeof cacheReadPerMTokAbove200k === "number" ? { cacheReadPerMTokAbove200k } : {}),
+  };
+}
+
+function stripProviderPrefix(model: string): string {
+  for (const prefix of providerPrefixes) {
+    if (model.startsWith(prefix)) {
+      return model.slice(prefix.length);
+    }
+  }
+  return model;
+}
+
+function createModelCandidates(model: string): string[] {
+  const normalized = normalizeModel(model);
+  const stripped = stripProviderPrefix(normalized);
+  const candidates = new Set<string>([normalized, stripped]);
+
+  for (const prefix of providerPrefixes) {
+    candidates.add(`${prefix}${normalized}`);
+    candidates.add(`${prefix}${stripped}`);
+  }
+
+  return Array.from(candidates).filter((candidate) => candidate.length > 0);
+}
+
+function findEntry(data: Record<string, PriceEntry>, model: string): PriceEntry | null {
+  const candidates = createModelCandidates(model);
+  for (const candidate of candidates) {
+    const matched = data[candidate];
+    if (matched) {
+      return matched;
+    }
+  }
+
+  const normalized = normalizeModel(model);
+  for (const [key, value] of Object.entries(data)) {
+    if (key.includes(normalized)) {
+      return value;
+    }
+    if (normalized.includes(key) && (key.includes("-") || key.includes("/"))) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function findFallback(model: string): { input: number; output: number; cacheCreate: number; cacheRead: number } | null {
+  const candidates = createModelCandidates(model);
+  for (const candidate of candidates) {
+    const matched = fallbackPrices[candidate];
+    if (matched) {
+      return matched;
+    }
+  }
+  return null;
+}
 
 export async function loadPricing(options?: { offline?: boolean }): Promise<ModelPricing> {
   const cachePath = path.join(os.homedir(), ".config", "cceye", "pricing-cache.json");
@@ -91,21 +200,17 @@ function writeCache(cachePath: string, data: Record<string, PriceEntry>): void {
 }
 
 function buildPricing(data: Record<string, PriceEntry>): ModelPricing {
+  const normalizedData = Object.fromEntries(
+    Object.entries(data).map(([model, entry]) => [normalizeModel(model), entry])
+  );
+
   return {
     getPrice(model: string) {
-      const normalized = normalizeModel(model);
-      const entry = data[normalized] ?? data[model];
+      const entry = findEntry(normalizedData, model);
       if (entry) {
-        return {
-          inputPerMTok: (entry.input_cost_per_token ?? 0) * 1_000_000,
-          outputPerMTok: (entry.output_cost_per_token ?? 0) * 1_000_000,
-          cacheCreatePerMTok:
-            (entry.cache_creation_input_token_cost ?? entry.cache_creation_input_cost_per_token ?? 0) *
-            1_000_000,
-          cacheReadPerMTok: (entry.cache_read_input_token_cost ?? entry.cache_read_input_cost_per_token ?? 0) * 1_000_000,
-        };
+        return toModelPrice(entry);
       }
-      const fallback = fallbackPrices[normalized] ?? fallbackPrices[model];
+      const fallback = findFallback(model);
       if (!fallback) {
         return null;
       }
