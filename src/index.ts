@@ -34,6 +34,7 @@ import { loadPricing } from "./pricing.js";
 import { aggregateByPeriod } from "./aggregator.js";
 import { collectUsageEntries } from "./usage-collector.js";
 import { hourlyTrend, nextPoll, toModelBreakdown, toProjectBreakdown } from "./polling-metrics.js";
+import { buildReportRows, printReportRows, type ReportCommand } from "./reporting.js";
 
 export { collectUsageEntries, hourlyTrend, nextPoll, toModelBreakdown, toProjectBreakdown };
 
@@ -59,6 +60,10 @@ export async function main(cliArgs: string[] = process.argv.slice(2)): Promise<v
   }
   if (command === "status") {
     await showStatus(cliArgs);
+    return;
+  }
+  if (isReportCommand(command)) {
+    await showReport(command, cliArgs);
     return;
   }
   if (command === "init") {
@@ -111,21 +116,48 @@ export function readPackageVersion(): string {
 }
 
 function findCommand(args: string[]): string | undefined {
+  const optionWithValue = new Set(["--config", "--since", "--until", "--timezone"]);
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (typeof arg !== "string") {
       continue;
     }
-    if (arg === "--config") {
+    if (optionWithValue.has(arg)) {
       i += 1;
       continue;
     }
     if (isDebugFlag(arg)) {
       continue;
     }
+    if (arg.startsWith("-")) {
+      continue;
+    }
     return arg;
   }
   return undefined;
+}
+
+function isReportCommand(command: string): command is ReportCommand {
+  return command === "daily" || command === "weekly" || command === "monthly" || command === "session";
+}
+
+function readOptionValue(args: string[], name: string): string | undefined {
+  const index = args.findIndex((arg) => arg === name);
+  if (index < 0) {
+    return undefined;
+  }
+  const next = args[index + 1];
+  return typeof next === "string" ? next : undefined;
+}
+
+function parseDateFilter(value: string | undefined, flag: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!/^\d{8}$/.test(value)) {
+    throw new Error(`${flag} must be YYYYMMDD`);
+  }
+  return value;
 }
 
 export function removeCommandFromArgs(args: string[]): string[] {
@@ -161,6 +193,21 @@ export function removeCommandFromArgs(args: string[]): string[] {
   }
 
   return output;
+}
+
+function removeOptionPair(args: string[], optionName: string): string[] {
+  const result: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === optionName) {
+      i += 1;
+      continue;
+    }
+    const value = args[i];
+    if (typeof value === "string") {
+      result.push(value);
+    }
+  }
+  return result;
 }
 
 /* v8 ignore start */
@@ -335,6 +382,38 @@ export async function showStatus(cliArgs: string[] = process.argv.slice(2)): Pro
       2
     )}, Monthly: $${data.currentCosts.monthly.toFixed(2)}`
   );
+}
+
+export async function showReport(command: ReportCommand, cliArgs: string[] = process.argv.slice(2)): Promise<void> {
+  const since = parseDateFilter(readOptionValue(cliArgs, "--since"), "--since");
+  const until = parseDateFilter(readOptionValue(cliArgs, "--until"), "--until");
+  const reportTimezone = readOptionValue(cliArgs, "--timezone");
+  const json = hasFlag(cliArgs, ["--json"]);
+  const breakdown = hasFlag(cliArgs, ["--breakdown"]);
+  const offline = hasFlag(cliArgs, ["--offline"]);
+
+  const configArgs = removeOptionPair(removeOptionPair(cliArgs, "--since"), "--until");
+  const config = loadConfigFromArgs(configArgs);
+  const pricing = await loadPricing({ offline });
+  const state = loadState();
+  const logger = createLogger(config);
+  const entries = await collectUsageEntries(config, state, pricing, logger);
+
+  const rows = buildReportRows(entries, command, {
+    since,
+    until,
+    json,
+    breakdown,
+    timezone: reportTimezone ?? config.timezone,
+  });
+
+  printReportRows(rows, {
+    since,
+    until,
+    json,
+    breakdown,
+    timezone: reportTimezone ?? config.timezone,
+  });
 }
 
 export async function initConfig(): Promise<void> {
