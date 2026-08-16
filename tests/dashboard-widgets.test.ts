@@ -34,6 +34,26 @@ describe("dashboard theme and widgets", () => {
     expect(content).toContain("$5.00");
   });
 
+  it("shows partial coverage and uncapped overage percentages", () => {
+    const box = { setContent: vi.fn() };
+    const config: Pick<Config, "thresholds"> = {
+      thresholds: {
+        daily: { warning: 5, critical: 10 },
+        weekly: { warning: 10, critical: 20 },
+        monthly: { warning: 30, critical: 40 },
+      },
+    };
+    renderCostProgress(
+      box,
+      { daily: 15, weekly: 0, monthly: 0 },
+      config,
+      { daily: { pricedEvents: 1, unpricedEvents: 2, totalEvents: 3, pricedInputTokens: 1, totalInputTokens: 3, eventCoverageRatio: 1 / 3, tokenCoverageRatio: 1 / 3, complete: false } }
+    );
+    const content = String(box.setContent.mock.calls[0]?.[0]);
+    expect(content).toContain("150.0%");
+    expect(content).toContain("PARTIAL (2 unpriced)");
+  });
+
   it("updates hourly trend chart for empty and non-empty data", () => {
     const setData = vi.fn();
     const chart: LineChartWidget = { focus: vi.fn(), setData };

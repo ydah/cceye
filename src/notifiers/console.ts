@@ -7,11 +7,11 @@ export class ConsoleNotifier implements Notifier {
 
   async send(alert: Alert): Promise<void> {
     const time = alert.timestamp.toISOString().replace("T", " ").split(".")[0];
-    const label = alert.level === "critical" ? "CRITICAL" : "WARNING";
-    const message = `[${time}] [${label}] ${formatWindowLabel(alert.window)} cost exceeded: $${alert.currentCost.toFixed(
-      2
-    )} / threshold $${alert.threshold.toFixed(2)}`;
-    const output = alert.level === "critical" ? chalk.red(message) : chalk.yellow(message);
+    const label = alert.transition === "recovery" ? "RECOVERY" : alert.level === "critical" ? "CRITICAL" : "WARNING";
+    const message = alert.transition === "recovery"
+      ? `[${time}] [${label}] ${formatWindowLabel(alert.window)} cost recovered: $${alert.currentCost.toFixed(2)}`
+      : `[${time}] [${label}] ${formatWindowLabel(alert.window)} cost exceeded: $${alert.currentCost.toFixed(2)} / threshold $${alert.threshold.toFixed(2)}`;
+    const output = alert.transition === "recovery" ? chalk.green(message) : alert.level === "critical" ? chalk.red(message) : chalk.yellow(message);
     console.log(output);
   }
 }

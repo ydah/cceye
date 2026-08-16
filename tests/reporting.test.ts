@@ -92,4 +92,27 @@ describe("printReportRows", () => {
     printReportRows(rows, { json: true, breakdown: false, timezone: "UTC" });
     expect(String(log.mock.calls[1]?.[0])).toContain('"key": "2026-02-15"');
   });
+
+  it("prints project/session breakdowns with coverage and Other", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    log.mockClear();
+    const row = {
+      key: "2026-02-15",
+      totalCost: 3,
+      inputTokens: 20,
+      outputTokens: 10,
+      cacheCreationTokens: 4,
+      cacheReadTokens: 2,
+      byModel: { m1: 2, m2: 1 },
+      byProject: { p1: 2, p2: 1 },
+      bySession: { "p1/s1": 2, "p2/s2": 1 },
+      coverage: { eventCoverageRatio: 0.5, tokenCoverageRatio: 0.5, unpricedEvents: 1, complete: false },
+    };
+
+    printReportRows([row], { json: false, breakdown: true, breakdownDimension: "project", showCoverage: true, top: 1, other: true, timezone: "UTC" });
+    printReportRows([row], { json: false, breakdown: true, breakdownDimension: "session", timezone: "UTC" });
+    expect(String(log.mock.calls[0]?.[0])).toContain("PARTIAL (1 unpriced)");
+    expect(String(log.mock.calls[0]?.[0])).toContain("projects=[p1=$2.0000, Other=$1.0000]");
+    expect(String(log.mock.calls[1]?.[0])).toContain("sessions=[p1/s1=$2.0000, p2/s2=$1.0000]");
+  });
 });

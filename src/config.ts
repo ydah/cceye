@@ -42,11 +42,27 @@ const storageSchema = z.object({
   database_path: z.string().min(1).default("~/.config/cceye/cceye.db"),
 });
 
+const pricingSchema = z.object({
+  aliases: z.record(z.string(), z.string()).default({}),
+});
+
+const billingSchema = z.object({
+  anthropic: z.object({
+    enabled: z.boolean().default(false),
+    api_key_env: z.string().min(1).default("CCEYE_ANTHROPIC_ADMIN_API_KEY"),
+  }),
+});
+
+const alertsSchema = z.object({
+  notify_on_recovery: z.boolean().default(false),
+  max_retries: z.number().int().positive().default(5),
+});
+
 const configSchema = z
   .object({
     claude_data_dir: z.string().min(1).default("~/.claude/projects"),
     polling_interval_milliseconds: z.number().int().positive().optional(),
-    timezone: z.string().min(1),
+    timezone: z.string().min(1).refine(isValidTimezone, "must be a valid IANA timezone"),
     cost_mode: z.enum(["auto", "calculate", "display"]),
     thresholds: z.object({
       daily: thresholdsSchema,
@@ -58,6 +74,9 @@ const configSchema = z
     log_level: z.enum(["debug", "info", "warn", "error"]),
     dashboard: dashboardSchema,
     storage: storageSchema.default({ database_path: "~/.config/cceye/cceye.db" }),
+    pricing: pricingSchema.default({ aliases: {} }),
+    billing: billingSchema.default({ anthropic: { enabled: false, api_key_env: "CCEYE_ANTHROPIC_ADMIN_API_KEY" } }),
+    alerts: alertsSchema.default({ notify_on_recovery: false, max_retries: 5 }),
   })
   .superRefine((value, context) => {
     if (value.polling_interval_milliseconds === undefined) {
@@ -106,6 +125,23 @@ const configSchema = z
         });
       }
     }
+
+    for (const alias of Object.keys(value.pricing.aliases)) {
+      const seen = new Set<string>();
+      let current: string | undefined = alias;
+      while (current && value.pricing.aliases[current]) {
+        if (seen.has(current)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["pricing", "aliases", alias],
+            message: "pricing aliases must not contain cycles",
+          });
+          break;
+        }
+        seen.add(current);
+        current = value.pricing.aliases[current];
+      }
+    }
   })
   .transform((value) => ({
     ...value,
@@ -113,6 +149,15 @@ const configSchema = z
   }));
 
 export type Config = z.infer<typeof configSchema>;
+
+function isValidTimezone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const defaultConfigPath = path.join(os.homedir(), ".config", "cceye", "config.yaml");
 
@@ -174,6 +219,7 @@ export function loadConfig(argPath?: string): Config {
       ...result.data.storage,
       database_path: expandHome(result.data.storage.database_path),
     },
+    pricing: result.data.pricing,
   };
 }
 

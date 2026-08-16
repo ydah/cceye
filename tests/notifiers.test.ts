@@ -279,5 +279,12 @@ describe("notifiers", () => {
     const channels = await router.send(alert);
 
     expect(channels.sort()).toEqual(["console", "email", "slack"]);
+    expect(router.channelNames()).toEqual(["console", "macos", "slack", "email"]);
+    await expect(router.sendChannel("console", alert)).resolves.toEqual({ channel: "console", status: "success" });
+    await expect(router.sendChannel("missing", alert)).resolves.toEqual({
+      channel: "missing",
+      status: "failed",
+      error: "notification channel is not configured",
+    });
   });
 });

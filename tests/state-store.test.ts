@@ -53,6 +53,7 @@ describe("state-store", () => {
         "monthly:critical": null,
       },
       notificationHistory: [],
+      activeAlerts: { daily: null, weekly: null, monthly: null },
       fileIndex: {},
       cachedCosts: {
         daily: { total: 0, byModel: {} },

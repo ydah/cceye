@@ -5,14 +5,15 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/clean-dist.mjs && tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "benchmark:generate": "node scripts/generate-benchmark-jsonl.mjs"
   },
   "bin": {
     "cceye": "dist/index.js"
@@ -20,7 +21,8 @@
   "files": [
     "dist",
     "README.md",
-    "config.example.yaml"
+    "config.example.yaml",
+    "SECURITY.md"
   ],
   "publishConfig": {
     "access": "public",

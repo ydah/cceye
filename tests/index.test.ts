@@ -253,6 +253,145 @@ describe("index.ts", () => {
     expect(output).toMatchObject({ daily: expect.any(Number), weekly: expect.any(Number), monthly: expect.any(Number) });
   });
 
+  it("persists alert deliveries and records partial notification success", async () => {
+    const index = await import("../src/index.ts");
+    const { loadConfig } = await import("../src/config.ts");
+    const { loadPricing } = await import("../src/pricing.ts");
+    const { createLogger } = await import("../src/logger.ts");
+    const { SqliteUsageStorage } = await import("../src/storage/sqlite-storage.ts");
+
+    const config = loadConfig(configPath);
+    config.thresholds.daily.warning = 0.001;
+    config.thresholds.daily.critical = 1;
+    const pricing = await loadPricing();
+    const logger = createLogger(config);
+    logger.silent = true;
+    const router = {
+      channelNames: vi.fn(() => ["success-channel", "failed-channel"]),
+      sendChannel: vi.fn(async (channel: string) =>
+        channel === "success-channel"
+          ? { channel, status: "success" as const }
+          : { channel, status: "failed" as const, error: "delivery failed" }
+      ),
+    };
+    const storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
+
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+
+    const deliveries = await storage.listDeliveries(Date.now() + 60_000, 10);
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.status).toBe("retrying");
+    expect(router.sendChannel).toHaveBeenCalledTimes(2);
+    await storage.close();
+  });
+
+  it("sends a recovery notification after a threshold clears", async () => {
+    const index = await import("../src/index.ts");
+    const { loadConfig } = await import("../src/config.ts");
+    const { loadPricing } = await import("../src/pricing.ts");
+    const { createLogger } = await import("../src/logger.ts");
+    const { SqliteUsageStorage } = await import("../src/storage/sqlite-storage.ts");
+
+    const config = loadConfig(configPath);
+    config.thresholds.daily.warning = 0.001;
+    config.thresholds.daily.critical = 1;
+    config.alerts.notify_on_recovery = true;
+    const pricing = await loadPricing();
+    const logger = createLogger(config);
+    logger.silent = true;
+    const router = {
+      channelNames: vi.fn(() => ["test"]),
+      sendChannel: vi.fn(async (channel: string) => ({ channel, status: "success" as const })),
+    };
+    const storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
+
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+    config.thresholds.daily.warning = 5;
+    config.thresholds.daily.critical = 10;
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+
+    expect(router.sendChannel).toHaveBeenCalledTimes(2);
+    expect((await storage.getDeliveryCounts()).delivered).toBe(2);
+    expect(JSON.parse(fs.readFileSync(path.join(tempHome, ".config", "cceye", "state.json"), "utf8")).activeAlerts.daily).toBeNull();
+    await storage.close();
+  });
+
+  it("exposes pricing, billing, reconciliation, doctor, and explicit notification commands", async () => {
+    const index = await import("../src/index.ts");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await index.main(["prices", "explain", "claude-sonnet-4-5-20250929", "--offline", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain("Cache read");
+
+    await index.main(["billing", "status", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"records"');
+
+    await index.main(["reconcile", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"estimatedCoverage"');
+
+    await index.main(["doctor", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"checks"');
+
+    await index.main(["notifications", "reset"]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain("reset");
+
+    await index.main(["notify", "test", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"test":true');
+
+    await index.main(["db", "check", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"ok":true');
+    await index.main(["db", "backup", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"backupPath"');
+
+    const { loadConfig } = await import("../src/config.ts");
+    const { SqliteUsageStorage } = await import("../src/storage/sqlite-storage.ts");
+    const loadedConfig = loadConfig(configPath);
+    const retryStorage = new SqliteUsageStorage(loadedConfig.storage.database_path);
+    await retryStorage.createAlert({
+      id: "cli-alert",
+      fingerprint: "cli-alert",
+      windowKey: "daily",
+      windowStartMs: 0,
+      level: "warning",
+      state: "firing",
+      currentAmountNanos: 1n,
+      thresholdAmountNanos: 1n,
+      firstSeenAtMs: 1,
+      lastSeenAtMs: 1,
+      resolvedAtMs: null,
+    });
+    await retryStorage.enqueueDelivery({
+      id: "cli-delivery",
+      alertId: "cli-alert",
+      channel: "test",
+      transition: "firing",
+      status: "dead",
+      attempts: 5,
+      nextAttemptAtMs: 0,
+      lastError: "failed",
+      idempotencyKey: "cli-key",
+      createdAtMs: 1,
+      deliveredAtMs: null,
+    });
+    await retryStorage.close();
+    await index.main(["alerts", "retry", "cli-delivery", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"retried":true');
+
+    const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const isolatedProjects = path.join(tempRoot, "projects");
+    fs.cpSync(dataDir, isolatedProjects, { recursive: true });
+    process.env.CLAUDE_CONFIG_DIR = isolatedProjects;
+    await index.main(["db", "rebuild", "--json", "--config", configPath]);
+    if (originalClaudeConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+    }
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"databasePath"');
+  });
+
   it("treats symlinked executable path as direct run", async () => {
     const index = await import("../src/index.ts");
     const actualScriptPath = path.join(tempRoot, "actual-index.js");

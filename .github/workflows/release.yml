@@ -59,7 +59,7 @@ jobs:
           npm init -y >/dev/null
           npm install "$GITHUB_WORKSPACE/$PACKAGE_TARBALL" >/dev/null
           npx cceye --version
-          npx cceye --help || true
+          npx cceye --help
 
       - name: Publish to npm (Trusted Publishing)
         run: npm publish --provenance

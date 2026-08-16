@@ -41,6 +41,7 @@ export const collectUsageIncrementally = async (
   const events: NormalizedUsageEvent[] = [];
   const costs: EventCost[] = [];
   const cursors: FileCursor[] = [];
+  const seenFiles = new Set<string>();
   const metrics: IngestionMetrics = {
     scannedFiles: 0,
     changedFiles: 0,
@@ -61,6 +62,7 @@ export const collectUsageIncrementally = async (
     for (const file of files) {
       const stat = fs.statSync(file);
       const identity = identifySourceFile(file);
+      seenFiles.add(`${identity.sourceKind}\0${identity.fileIdentity}`);
       const previous = await storage.getFileCursor(identity);
       const isTruncated = previous !== null && stat.size < previous.committedOffset;
       const generation = isTruncated ? previous.generation + 1 : previous?.generation ?? 0;
@@ -122,7 +124,7 @@ export const collectUsageIncrementally = async (
             amountNanos: toMoneyNanos(estimated),
             currency: "USD",
             priceSource: pricing.source ?? null,
-            priceCatalogHash: null,
+            priceCatalogHash: pricing.catalogHash ?? null,
             matchedModel: pricing.explain?.(entry.model).matchedModel ?? entry.model,
             matchType: pricing.explain?.(entry.model).matchType ?? "unknown",
             calculatedAtMs: ingestedAtMs,
@@ -140,7 +142,7 @@ export const collectUsageIncrementally = async (
           amountNanos: toMoneyNanos(hybrid),
           currency: "USD",
           priceSource: hybrid === entry.costUSD ? "reported" : pricing.source ?? null,
-          priceCatalogHash: null,
+          priceCatalogHash: pricing.catalogHash ?? null,
           matchedModel: entry.model,
           matchType: hybrid === entry.costUSD ? "reported" : pricing.explain?.(entry.model).matchType ?? "unknown",
           calculatedAtMs: ingestedAtMs,
@@ -156,6 +158,13 @@ export const collectUsageIncrementally = async (
         status: "active",
         lastSeenAtMs: Date.now(),
       });
+    }
+  }
+
+  for (const cursor of await storage.listFileCursors()) {
+    const key = `${cursor.sourceKind}\0${cursor.fileIdentity}`;
+    if (cursor.status === "active" && !seenFiles.has(key)) {
+      cursors.push({ ...cursor, status: "missing", lastSeenAtMs: Date.now() });
     }
   }
 

@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 import { z } from "zod";
 
 const priceEntrySchema = z
@@ -46,6 +47,7 @@ export interface ModelPricing {
   status?: PricingStatus;
   source?: string;
   cacheUpdatedAt?: number;
+  catalogHash?: string | undefined;
 }
 
 export type PricingStatus = "fresh" | "stale" | "fallback" | "unavailable";
@@ -58,6 +60,7 @@ export interface PricingExplanation {
   status: PricingStatus;
   price: ModelPrice | null;
   fetchedAt: number | null;
+  catalogHash?: string | undefined;
 }
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -142,13 +145,25 @@ interface MatchedPriceEntry {
   matchType: PricingExplanation["matchType"];
 }
 
-function findEntry(data: Record<string, PriceEntry>, model: string): MatchedPriceEntry | null {
-  const candidates = createModelCandidates(model);
+function findEntry(
+  data: Record<string, PriceEntry>,
+  model: string,
+  aliases: Record<string, string> = {}
+): MatchedPriceEntry | null {
+  const normalizedModel = normalizeModel(model);
+  const aliasTarget = aliases[normalizedModel];
+  const candidates = createModelCandidates(aliasTarget ?? model);
   const normalized = normalizeModel(model);
   for (const [index, candidate] of candidates.entries()) {
     const matched = data[candidate];
     if (matched) {
-      const matchType = index === 0 ? "exact" : candidate === normalized ? "normalized" : "provider_prefix";
+      const matchType = aliasTarget
+        ? "explicit_alias"
+        : index === 0
+          ? "exact"
+          : candidate === normalized
+            ? "normalized"
+            : "provider_prefix";
       return { entry: matched, model: candidate, matchType };
     }
   }
@@ -166,12 +181,12 @@ function findFallback(model: string): { input: number; output: number; cacheCrea
   return null;
 }
 
-export async function loadPricing(options?: { offline?: boolean }): Promise<ModelPricing> {
+export async function loadPricing(options?: { offline?: boolean; aliases?: Record<string, string> }): Promise<ModelPricing> {
   const cachePath = path.join(os.homedir(), ".config", "cceye", "pricing-cache.json");
   const cached = readCache(cachePath);
 
   if (cached && Date.now() - cached.updatedAt < CACHE_TTL_MS) {
-    return buildPricing(cached.data, "fresh", "LiteLLM cache", cached.updatedAt);
+    return buildPricing(cached.data, "fresh", "LiteLLM cache", cached.updatedAt, options?.aliases);
   }
 
   if (options?.offline) {
@@ -179,7 +194,8 @@ export async function loadPricing(options?: { offline?: boolean }): Promise<Mode
       cached?.data ?? {},
       cached ? "stale" : Object.keys(fallbackPrices).length > 0 ? "fallback" : "unavailable",
       cached ? "LiteLLM stale cache" : "built-in fallback",
-      cached?.updatedAt ?? null
+      cached?.updatedAt ?? null,
+      options?.aliases
     );
   }
 
@@ -187,20 +203,23 @@ export async function loadPricing(options?: { offline?: boolean }): Promise<Mode
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     timeout.unref?.();
-    const response = await fetch(PRICING_URL, { signal: controller.signal });
-    clearTimeout(timeout);
-    if (!response.ok) {
-      return buildPricing(cached?.data ?? {}, cached ? "stale" : "fallback", "LiteLLM fallback", cached?.updatedAt ?? null);
+    try {
+      const response = await fetch(PRICING_URL, { signal: controller.signal });
+      if (!response.ok) {
+        return buildPricing(cached?.data ?? {}, cached ? "stale" : "fallback", "LiteLLM fallback", cached?.updatedAt ?? null, options?.aliases);
+      }
+      const parsedData = pricingTableSchema.safeParse(await response.json());
+      if (!parsedData.success) {
+        return buildPricing(cached?.data ?? {}, cached ? "stale" : "fallback", "LiteLLM fallback", cached?.updatedAt ?? null, options?.aliases);
+      }
+      const data = parsedData.data;
+      writeCache(cachePath, data);
+      return buildPricing(data, "fresh", "LiteLLM", Date.now(), options?.aliases);
+    } finally {
+      clearTimeout(timeout);
     }
-    const parsedData = pricingTableSchema.safeParse(await response.json());
-    if (!parsedData.success) {
-      return buildPricing(cached?.data ?? {}, cached ? "stale" : "fallback", "LiteLLM fallback", cached?.updatedAt ?? null);
-    }
-    const data = parsedData.data;
-    writeCache(cachePath, data);
-    return buildPricing(data, "fresh", "LiteLLM", Date.now());
   } catch {
-    return buildPricing(cached?.data ?? {}, cached ? "stale" : "fallback", "LiteLLM fallback", cached?.updatedAt ?? null);
+    return buildPricing(cached?.data ?? {}, cached ? "stale" : "fallback", "LiteLLM fallback", cached?.updatedAt ?? null, options?.aliases);
   }
 }
 
@@ -230,17 +249,22 @@ function buildPricing(
   data: Record<string, PriceEntry>,
   status: PricingStatus,
   source: string,
-  cacheUpdatedAt: number | null
+  cacheUpdatedAt: number | null,
+  aliases: Record<string, string> = {}
 ): ModelPricing {
   const normalizedData = Object.fromEntries(
     Object.entries(data).map(([model, entry]) => [normalizeModel(model), entry])
+  );
+  const normalizedAliases = Object.fromEntries(
+    Object.entries(aliases).map(([model, target]) => [normalizeModel(model), normalizeModel(target)])
   );
 
   const pricing: ModelPricing = {
     status,
     source,
+    catalogHash: hashCatalog(normalizedData),
     getPrice(model: string) {
-      const matched = findEntry(normalizedData, model);
+      const matched = findEntry(normalizedData, model, normalizedAliases);
       if (matched) {
         return toModelPrice(matched.entry);
       }
@@ -256,7 +280,7 @@ function buildPricing(
       };
     },
     explain(model: string): PricingExplanation {
-      const matched = findEntry(normalizedData, model);
+      const matched = findEntry(normalizedData, model, normalizedAliases);
       if (matched) {
         return {
           rawModel: model,
@@ -266,6 +290,7 @@ function buildPricing(
           status,
           price: toModelPrice(matched.entry),
           fetchedAt: cacheUpdatedAt,
+          catalogHash: pricing.catalogHash,
         };
       }
       const fallback = findFallback(model);
@@ -283,6 +308,7 @@ function buildPricing(
             cacheReadPerMTok: fallback.cacheRead,
           },
           fetchedAt: cacheUpdatedAt,
+          catalogHash: pricing.catalogHash,
         };
       }
       return {
@@ -300,6 +326,11 @@ function buildPricing(
     pricing.cacheUpdatedAt = cacheUpdatedAt;
   }
   return pricing;
+}
+
+function hashCatalog(data: Record<string, PriceEntry>): string {
+  const canonical = Object.fromEntries(Object.entries(data).sort(([left], [right]) => left.localeCompare(right)));
+  return crypto.createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 
 function normalizeModel(model: string): string {

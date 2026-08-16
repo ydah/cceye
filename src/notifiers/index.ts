@@ -34,6 +34,23 @@ export class NotificationRouter {
     });
   }
 
+  async sendChannel(channel: string, alert: Alert): Promise<DeliveryResult> {
+    const notifier = this.notifiers.find((candidate) => candidate.name === channel);
+    if (!notifier) {
+      return { channel, status: "failed", error: "notification channel is not configured" };
+    }
+    try {
+      await notifier.send(alert);
+      return { channel, status: "success" };
+    } catch (error) {
+      return { channel, status: "failed", error: redactSecret(error) };
+    }
+  }
+
+  channelNames(): string[] {
+    return this.notifiers.map((notifier) => notifier.name);
+  }
+
   /**
    * Compatibility wrapper for callers that only need successful channel names.
    * New delivery-aware code should use sendDetailed.

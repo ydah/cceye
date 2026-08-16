@@ -11,10 +11,20 @@ export function updateModelBreakdown(
     .sort((a, b) => b.cost - a.cost)
     .map((item) => {
       const percent = total > 0 ? (item.cost / total) * 100 : 0;
-      return [item.model, `$${item.cost.toFixed(2)}`, `${percent.toFixed(0)}%`];
+      return [sanitizeLabel(item.model), `$${item.cost.toFixed(2)}`, `${percent.toFixed(0)}%`];
     });
   table.setData({
     headers: [primaryColumn, "Cost", "%"],
     data: rows,
   });
+}
+
+function sanitizeLabel(value: string): string {
+  return Array.from(value)
+    .filter((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code >= 32 && code !== 127;
+    })
+    .join("")
+    .slice(0, 200);
 }

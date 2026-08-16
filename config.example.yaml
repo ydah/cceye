@@ -59,6 +59,20 @@ log_level: "info"
 dashboard:
   refresh_interval_seconds: 60
 
+alerts:
+  notify_on_recovery: false
+  max_retries: 5
+
 # Transactional usage ledger
 storage:
   database_path: "~/.config/cceye/cceye.db"
+
+# Exact model aliases; substring matching is never used.
+pricing:
+  aliases: {}
+
+# Optional Anthropic Admin Cost Report sync; the key is read from the environment.
+billing:
+  anthropic:
+    enabled: false
+    api_key_env: "CCEYE_ANTHROPIC_ADMIN_API_KEY"

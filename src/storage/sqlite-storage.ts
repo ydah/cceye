@@ -5,6 +5,8 @@ import Database from "better-sqlite3";
 import { ledgerSchema } from "./sqlite-schema.js";
 import type {
   AlertInstance,
+  BillingRecord,
+  DeliveryCounts,
   EventCost,
   FileCursor,
   FileIdentity,
@@ -23,12 +25,14 @@ const schemaVersion = 1;
 
 export class SqliteUsageStorage implements UsageStorage {
   private readonly database: Database.Database;
+  private readonly databasePath: string;
 
   constructor(databasePath = defaultDatabasePath()) {
     if (!path.isAbsolute(databasePath)) {
       throw new Error("database path must be absolute");
     }
     const directory = path.dirname(databasePath);
+    this.databasePath = databasePath;
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     fs.chmodSync(directory, 0o700);
     this.database = new Database(databasePath);
@@ -37,6 +41,12 @@ export class SqliteUsageStorage implements UsageStorage {
     this.database.pragma("foreign_keys = ON");
     this.database.pragma("busy_timeout = 5000");
     fs.chmodSync(databasePath, 0o600);
+    for (const suffix of ["-wal", "-shm"]) {
+      const sidecar = `${databasePath}${suffix}`;
+      if (fs.existsSync(sidecar)) {
+        fs.chmodSync(sidecar, 0o600);
+      }
+    }
   }
 
   async migrate(): Promise<void> {
@@ -55,7 +65,20 @@ export class SqliteUsageStorage implements UsageStorage {
         .prepare("INSERT INTO schema_migrations (version, applied_at_ms) VALUES (?, ?)")
         .run(schemaVersion, Date.now());
     });
-    migrate();
+    try {
+      migrate();
+    } catch (error) {
+      this.database.close();
+      const failedPath = `${this.databasePath}.failed-${Date.now()}`;
+      fs.renameSync(this.databasePath, failedPath);
+      for (const suffix of ["-wal", "-shm"]) {
+        const sidecar = `${this.databasePath}${suffix}`;
+        if (fs.existsSync(sidecar)) {
+          fs.renameSync(sidecar, `${failedPath}${suffix}`);
+        }
+      }
+      throw new Error(`database migration failed; preserved failed database at ${failedPath}: ${String(error)}`);
+    }
   }
 
   async transaction<T>(fn: (tx: UsageTransaction) => T): Promise<T> {
@@ -77,6 +100,26 @@ export class SqliteUsageStorage implements UsageStorage {
       return null;
     }
     return mapFileCursor(row);
+  }
+
+  async listFileCursors(): Promise<FileCursor[]> {
+    const rows = this.database
+      .prepare(
+        `SELECT source_kind, canonical_path, file_identity, generation, committed_offset,
+                size, mtime_ms, status, last_seen_at_ms
+           FROM source_files ORDER BY generation DESC`
+      )
+      .all() as Record<string, unknown>[];
+    const seen = new Set<string>();
+    return rows.flatMap((row) => {
+      const cursor = mapFileCursor(row);
+      const key = `${cursor.sourceKind}\0${cursor.fileIdentity}`;
+      if (seen.has(key)) {
+        return [];
+      }
+      seen.add(key);
+      return [cursor];
+    });
   }
 
   async upsertFileCursor(cursor: FileCursor): Promise<void> {
@@ -193,6 +236,17 @@ export class SqliteUsageStorage implements UsageStorage {
       .run({ ...alert });
   }
 
+  async getAlert(id: string): Promise<AlertInstance | null> {
+    const row = this.database
+      .prepare(
+        `SELECT id, fingerprint, window_key, window_start_ms, level, state, current_amount_nanos,
+                threshold_amount_nanos, first_seen_at_ms, last_seen_at_ms, resolved_at_ms
+           FROM alert_instances WHERE id = ?`
+      )
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? mapAlert(row) : null;
+  }
+
   async enqueueDelivery(delivery: PendingDelivery): Promise<void> {
     this.database
       .prepare(
@@ -203,6 +257,32 @@ export class SqliteUsageStorage implements UsageStorage {
                  @lastError, @idempotencyKey, @createdAtMs, @deliveredAtMs)`
       )
       .run({ ...delivery });
+  }
+
+  async claimDeliveries(nowMs: number, limit: number): Promise<PendingDelivery[]> {
+    const claim = this.database.transaction(() => {
+      const rows = this.database
+        .prepare(
+          `SELECT id, alert_id, channel, transition, status, attempts, next_attempt_at_ms, last_error,
+                  idempotency_key, created_at_ms, delivered_at_ms
+             FROM delivery_outbox
+            WHERE status IN ('pending', 'retrying') AND next_attempt_at_ms <= ?
+            ORDER BY next_attempt_at_ms ASC LIMIT ?`
+        )
+        .all(nowMs, limit) as Record<string, unknown>[];
+      const update = this.database.prepare(
+        "UPDATE delivery_outbox SET status = 'leased' WHERE id = ? AND status IN ('pending', 'retrying')"
+      );
+      const claimed: PendingDelivery[] = [];
+      for (const row of rows) {
+        const result = update.run(String(row.id));
+        if (Number(result.changes) === 1) {
+          claimed.push(mapDelivery({ ...row, status: "leased" }));
+        }
+      }
+      return claimed;
+    });
+    return claim();
   }
 
   async listDeliveries(nowMs: number, limit: number): Promise<PendingDelivery[]> {
@@ -216,6 +296,42 @@ export class SqliteUsageStorage implements UsageStorage {
       )
       .all(nowMs, limit) as Record<string, unknown>[];
     return rows.map(mapDelivery);
+  }
+
+  async getDelivery(id: string): Promise<PendingDelivery | null> {
+    const row = this.database
+      .prepare(
+        `SELECT id, alert_id, channel, transition, status, attempts, next_attempt_at_ms, last_error,
+                idempotency_key, created_at_ms, delivered_at_ms
+           FROM delivery_outbox WHERE id = ?`
+      )
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? mapDelivery(row) : null;
+  }
+
+  async retryDelivery(id: string): Promise<boolean> {
+    const result = this.database
+      .prepare(
+        `UPDATE delivery_outbox
+            SET status = 'retrying', next_attempt_at_ms = ?, last_error = NULL, delivered_at_ms = NULL
+          WHERE id = ? AND status IN ('dead', 'retrying', 'pending')`
+      )
+      .run(Date.now(), id);
+    return Number(result.changes) === 1;
+  }
+
+  async getDeliveryCounts(): Promise<DeliveryCounts> {
+    const rows = this.database
+      .prepare("SELECT status, COUNT(*) AS count FROM delivery_outbox GROUP BY status")
+      .all() as Record<string, unknown>[];
+    const counts: DeliveryCounts = { pending: 0, retrying: 0, leased: 0, delivered: 0, dead: 0 };
+    for (const row of rows) {
+      const status = String(row.status) as keyof DeliveryCounts;
+      if (status in counts) {
+        counts[status] = toNumber(row.count);
+      }
+    }
+    return counts;
   }
 
   async updateDelivery(delivery: PendingDelivery): Promise<void> {
@@ -270,6 +386,51 @@ export class SqliteUsageStorage implements UsageStorage {
         row.last_successful_ingestion_ms === null ? null : toNumber(row.last_successful_ingestion_ms),
       durationMs: toNumber(row.duration_ms),
     };
+  }
+
+  async upsertBillingRecord(record: BillingRecord): Promise<void> {
+    this.database
+      .prepare(
+        `INSERT INTO billing_records
+          (record_id, provider, period_start_ms, period_end_ms, amount_nanos, currency, dimensions_json, fetched_at_ms)
+         VALUES (@recordId, @provider, @periodStartMs, @periodEndMs, @amountNanos, @currency, @dimensionsJson, @fetchedAtMs)
+         ON CONFLICT(record_id) DO UPDATE SET
+           amount_nanos = excluded.amount_nanos,
+           currency = excluded.currency,
+           dimensions_json = excluded.dimensions_json,
+           fetched_at_ms = excluded.fetched_at_ms`
+      )
+      .run({
+        recordId: record.recordId,
+        provider: record.provider,
+        periodStartMs: record.periodStartMs,
+        periodEndMs: record.periodEndMs,
+        amountNanos: record.amountNanos,
+        currency: record.currency,
+        dimensionsJson: JSON.stringify(record.dimensions),
+        fetchedAtMs: record.fetchedAtMs,
+      });
+  }
+
+  async queryBilling(fromMs: number, untilMs: number): Promise<BillingRecord[]> {
+    const rows = this.database
+      .prepare(
+        `SELECT record_id, provider, period_start_ms, period_end_ms, amount_nanos, currency, dimensions_json, fetched_at_ms
+           FROM billing_records
+          WHERE period_start_ms < ? AND period_end_ms > ?
+          ORDER BY period_start_ms ASC`
+      )
+      .all(untilMs, fromMs) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      recordId: String(row.record_id),
+      provider: String(row.provider),
+      periodStartMs: toNumber(row.period_start_ms),
+      periodEndMs: toNumber(row.period_end_ms),
+      amountNanos: toNullableBigInt(row.amount_nanos) ?? 0n,
+      currency: String(row.currency),
+      dimensions: parseDimensions(row.dimensions_json),
+      fetchedAtMs: toNumber(row.fetched_at_ms),
+    }));
   }
 
   async checkIntegrity(): Promise<IntegrityResult> {
@@ -423,6 +584,20 @@ const mapFileCursor = (row: Record<string, unknown>): FileCursor => ({
   lastSeenAtMs: toNumber(row.last_seen_at_ms),
 });
 
+const mapAlert = (row: Record<string, unknown>): AlertInstance => ({
+  id: String(row.id),
+  fingerprint: String(row.fingerprint),
+  windowKey: String(row.window_key),
+  windowStartMs: toNumber(row.window_start_ms),
+  level: String(row.level) as AlertInstance["level"],
+  state: String(row.state) as AlertInstance["state"],
+  currentAmountNanos: toNullableBigInt(row.current_amount_nanos) ?? 0n,
+  thresholdAmountNanos: toNullableBigInt(row.threshold_amount_nanos) ?? 0n,
+  firstSeenAtMs: toNumber(row.first_seen_at_ms),
+  lastSeenAtMs: toNumber(row.last_seen_at_ms),
+  resolvedAtMs: row.resolved_at_ms === null ? null : toNumber(row.resolved_at_ms),
+});
+
 const mapDelivery = (row: Record<string, unknown>): PendingDelivery => ({
   id: String(row.id),
   alertId: String(row.alert_id),
@@ -436,6 +611,23 @@ const mapDelivery = (row: Record<string, unknown>): PendingDelivery => ({
   createdAtMs: toNumber(row.created_at_ms),
   deliveredAtMs: row.delivered_at_ms === null ? null : toNumber(row.delivered_at_ms),
 });
+
+const parseDimensions = (value: unknown): Record<string, string> => {
+  if (typeof value !== "string") {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (typeof parsed !== "object" || parsed === null) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === "string")
+    );
+  } catch {
+    return {};
+  }
+};
 
 const makeCoverage = (
   totalEvents: number,

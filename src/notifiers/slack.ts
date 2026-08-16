@@ -23,15 +23,15 @@ export class SlackNotifier implements Notifier {
       return;
     }
 
-    const label = alert.level === "critical" ? "CRITICAL" : "WARNING";
+    const label = alert.transition === "recovery" ? "RECOVERY" : alert.level === "critical" ? "CRITICAL" : "WARNING";
     const message = `${this.mention ? `${this.mention} ` : ""}${label} ${formatWindowLabel(
       alert.window
-    )} cost exceeded: $${alert.currentCost.toFixed(2)} / $${alert.threshold.toFixed(2)}`;
+    )} ${alert.transition === "recovery" ? "cost recovered" : `cost exceeded: $${alert.currentCost.toFixed(2)} / $${alert.threshold.toFixed(2)}`}`;
 
     const payload = {
       attachments: [
         {
-          color: levelColors[alert.level],
+          color: alert.transition === "recovery" ? "#36a64f" : levelColors[alert.level],
           blocks: [
             {
               type: "section",
@@ -56,7 +56,10 @@ export class SlackNotifier implements Notifier {
 
     const response = await fetch(this.webhookUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(alert.idempotencyKey ? { "X-Cceye-Idempotency-Key": alert.idempotencyKey } : {}),
+      },
       body: JSON.stringify(payload),
     });
     if (!response.ok) {

@@ -4,6 +4,8 @@ export interface Alert {
   currentCost: number;
   threshold: number;
   timestamp: Date;
+  transition?: "firing" | "recovery";
+  idempotencyKey?: string;
 }
 
 export interface Notifier {

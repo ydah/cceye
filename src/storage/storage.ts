@@ -111,6 +111,14 @@ export interface AlertInstance {
   resolvedAtMs: number | null;
 }
 
+export interface DeliveryCounts {
+  pending: number;
+  retrying: number;
+  leased: number;
+  delivered: number;
+  dead: number;
+}
+
 export interface PendingDelivery {
   id: string;
   alertId: string;
@@ -123,6 +131,17 @@ export interface PendingDelivery {
   idempotencyKey: string;
   createdAtMs: number;
   deliveredAtMs: number | null;
+}
+
+export interface BillingRecord {
+  recordId: string;
+  provider: string;
+  periodStartMs: number;
+  periodEndMs: number;
+  amountNanos: MoneyNanos;
+  currency: string;
+  dimensions: Record<string, string>;
+  fetchedAtMs: number;
 }
 
 export interface IntegrityResult {
@@ -138,6 +157,7 @@ export interface UsageStorage {
   migrate(): Promise<void>;
   transaction<T>(fn: (tx: UsageTransaction) => T): Promise<T>;
   getFileCursor(identity: FileIdentity): Promise<FileCursor | null>;
+  listFileCursors(): Promise<FileCursor[]>;
   upsertFileCursor(cursor: FileCursor): Promise<void>;
   insertUsageEvents(events: NormalizedUsageEvent[]): Promise<{ inserted: number; duplicates: number }>;
   insertEventCosts(costs: EventCost[]): Promise<void>;
@@ -148,11 +168,18 @@ export interface UsageStorage {
   }): Promise<{ inserted: number; duplicates: number }>;
   queryUsage(query: UsageQuery): Promise<UsageSummary>;
   createAlert(alert: AlertInstance): Promise<void>;
+  getAlert(id: string): Promise<AlertInstance | null>;
   enqueueDelivery(delivery: PendingDelivery): Promise<void>;
+  claimDeliveries(nowMs: number, limit: number): Promise<PendingDelivery[]>;
   listDeliveries(nowMs: number, limit: number): Promise<PendingDelivery[]>;
+  getDelivery(id: string): Promise<PendingDelivery | null>;
+  retryDelivery(id: string): Promise<boolean>;
+  getDeliveryCounts(): Promise<DeliveryCounts>;
   updateDelivery(delivery: PendingDelivery): Promise<void>;
   recordIngestionHealth(health: IngestionHealth): Promise<void>;
   getLatestIngestionHealth(): Promise<IngestionHealth | null>;
+  upsertBillingRecord(record: BillingRecord): Promise<void>;
+  queryBilling(fromMs: number, untilMs: number): Promise<BillingRecord[]>;
   checkIntegrity(): Promise<IntegrityResult>;
   close(): Promise<void>;
 }

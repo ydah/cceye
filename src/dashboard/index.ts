@@ -52,7 +52,7 @@ export class Dashboard {
     nextPoll: Date | null,
     statusMessage?: string
   ): void {
-    renderCostProgress(this.layout.costBox, data.currentCosts, config);
+    renderCostProgress(this.layout.costBox, data.currentCosts, config, data.coverage);
     updateHourlyTrend(this.layout.trendLine, data.hourlyTrend);
     const isModelView = this.selectedDimension === "model";
     const breakdownLabel = isModelView ? " Breakdown (Model) " : " Breakdown (Project) ";
@@ -64,7 +64,12 @@ export class Dashboard {
     this.layout.modelTable.setLabel?.(breakdownLabel);
     updateModelBreakdown(this.layout.modelTable, breakdownData, primaryColumn);
     updateNotificationLog(this.layout.notificationLog, data.notificationHistory, config.timezone);
-    updateStatusBar(this.layout.statusBar, lastUpdated, nextPoll, statusMessage);
+    const delivery = data.deliveryCounts ?? { pending: 0, retrying: 0, leased: 0, delivered: 0, dead: 0 };
+    const lag = data.ingestionHealth?.lastSuccessfulIngestionMs === null || data.ingestionHealth?.lastSuccessfulIngestionMs === undefined
+      ? "ingestion lag=unknown"
+      : `ingestion lag=${Math.round(Math.max(0, Date.now() - data.ingestionHealth.lastSuccessfulIngestionMs) / 1000)}s`;
+    const quality = `${data.costBasis ?? "hybrid"} | ${data.pricingStatus} | ${lag} | outbox pending=${delivery.pending + delivery.retrying} dead=${delivery.dead}`;
+    updateStatusBar(this.layout.statusBar, lastUpdated, nextPoll, [quality, statusMessage].filter(Boolean).join(" | "));
     this.layout.screen.render();
   }
 

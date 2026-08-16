@@ -17,7 +17,7 @@ declare module "better-sqlite3" {
   }
 
   const Database: {
-    new (filename: string): Database.Database;
+    new (filename: string, options?: { readonly?: boolean }): Database.Database;
   };
   export = Database;
 }

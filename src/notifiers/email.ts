@@ -37,9 +37,9 @@ export class EmailNotifier implements Notifier {
       return;
     }
 
-    const label = alert.level === "critical" ? "CRITICAL" : "WARNING";
-    const subject = `[${label}] Claude Cost ${formatWindowLabel(alert.window)} threshold exceeded`;
-    const text = `${label} ${formatWindowLabel(alert.window)} cost exceeded.
+    const label = alert.transition === "recovery" ? "RECOVERY" : alert.level === "critical" ? "CRITICAL" : "WARNING";
+    const subject = `[${label}] Claude Cost ${formatWindowLabel(alert.window)} ${alert.transition === "recovery" ? "recovered" : "threshold exceeded"}`;
+    const text = `${label} ${formatWindowLabel(alert.window)} ${alert.transition === "recovery" ? "cost recovered." : "cost exceeded."}
 
 Current cost: $${alert.currentCost.toFixed(2)}
 Threshold: $${alert.threshold.toFixed(2)}
@@ -51,6 +51,7 @@ Time: ${alert.timestamp.toISOString()}
       to: this.to.split(",").map((entry) => entry.trim()),
       subject,
       text,
+      headers: alert.idempotencyKey ? { "X-Cceye-Idempotency-Key": alert.idempotencyKey } : undefined,
     });
   }
 }
