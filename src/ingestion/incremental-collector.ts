@@ -122,7 +122,7 @@ export const collectUsageIncrementally = async (
           sourceKind: identity.sourceKind,
           messageId: entry.messageId,
           requestId: entry.requestId,
-          sessionId: session,
+          sessionId: `${project}/${session}`,
           timestamp: entry.timestamp.toISOString(),
           rawLine: record.line,
         });

@@ -57,6 +57,22 @@ describe("database management", () => {
     expect(fs.readdirSync(directory).some((name) => name.startsWith("broken.db.failed-"))).toBe(true);
   });
 
+  it("keeps close safe after a failed migration has already closed the connection", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cceye-db-management-"));
+    directories.push(directory);
+    const databasePath = path.join(directory, "future.db");
+    const legacy = new Database(databasePath);
+    legacy.exec(
+      "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL); INSERT INTO schema_migrations VALUES (999, 1);"
+    );
+    legacy.close();
+
+    const storage = new SqliteUsageStorage(databasePath);
+    await expect(storage.migrate()).rejects.toThrow("unsupported database schema version: 999");
+    await expect(storage.close()).resolves.toBeUndefined();
+    expect(fs.readdirSync(directory).some((name) => name.startsWith("future.db.failed-"))).toBe(true);
+  });
+
   it("migrates the v1 delivery and billing tables", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cceye-db-management-"));
     directories.push(directory);

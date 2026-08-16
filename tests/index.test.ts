@@ -563,6 +563,22 @@ describe("index.ts", () => {
     ]);
 
     expect(trend).toEqual([{ hour: "2026-02-11T12:00:00.000Z", cost: 3 }]);
+
+    expect(
+      index.hourlyTrend([
+        {
+          timestamp: new Date("2026-02-11T12:10:00.000Z"),
+          model: "unknown",
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+          messageId: null,
+          requestId: null,
+          costUSD: null,
+        },
+      ])
+    ).toEqual([]);
     expect(index.toModelBreakdown({ a: 1, b: 2 })).toEqual([
       { model: "a", cost: 1 },
       { model: "b", cost: 2 },

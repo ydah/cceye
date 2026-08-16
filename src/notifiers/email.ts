@@ -23,6 +23,9 @@ export class EmailNotifier implements Notifier {
       host: email.smtp_host,
       port: email.smtp_port,
       secure: email.smtp_secure,
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 15_000,
       auth: {
         user: email.smtp_user,
         pass: email.smtp_pass,

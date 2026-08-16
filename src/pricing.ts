@@ -69,9 +69,6 @@ const PRICING_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const providerPrefixes = [
   "anthropic/",
-  "claude-3-5-",
-  "claude-3-",
-  "claude-",
   "openrouter/openai/",
   "openai/",
   "azure/",
@@ -282,7 +279,7 @@ function buildPricing(
       if (matched) {
         return toModelPrice(matched.entry);
       }
-      const fallback = findFallback(model);
+      const fallback = findFallback(normalizedAliases[normalizeModel(model)] ?? model);
       if (!fallback) {
         return null;
       }
@@ -307,12 +304,13 @@ function buildPricing(
           catalogHash: pricing.catalogHash,
         };
       }
-      const fallback = findFallback(model);
+      const aliasTarget = normalizedAliases[normalizeModel(model)];
+      const fallback = findFallback(aliasTarget ?? model);
       if (fallback) {
         return {
           rawModel: model,
-          matchedModel: normalizeModel(model),
-          matchType: "fallback",
+          matchedModel: normalizeModel(aliasTarget ?? model),
+          matchType: aliasTarget ? "explicit_alias" : "fallback",
           source: "built-in fallback",
           status: status === "fresh" ? "fallback" : status,
           price: {

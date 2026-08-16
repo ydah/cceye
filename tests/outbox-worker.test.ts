@@ -22,7 +22,7 @@ describe("delivery outbox worker", () => {
     resources.push({ directory, storage });
     await storage.migrate();
     await storage.transaction((tx) => {
-      void tx.createAlert({
+      tx.createAlertSync({
         id: "alert-success",
         fingerprint: "daily:warning:success",
         windowKey: "daily",
@@ -35,7 +35,7 @@ describe("delivery outbox worker", () => {
         lastSeenAtMs: 2,
         resolvedAtMs: null,
       });
-      void tx.enqueueDelivery({
+      tx.enqueueDeliverySync({
         id: "delivery-success",
         alertId: "alert-success",
         channel: "test",

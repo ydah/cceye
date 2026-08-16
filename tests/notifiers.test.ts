@@ -115,6 +115,35 @@ describe("notifiers", () => {
     await expect(notifier.send(alert)).rejects.toThrow("slack webhook request failed with status 500");
   });
 
+  it("passes an abort signal to bound webhook requests", async () => {
+    const fetchMock = vi.fn(async (_url: string, options: { signal?: AbortSignal }) => {
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+      return { ok: true };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { SlackNotifier } = await import("../src/notifiers/slack.ts");
+
+    await new SlackNotifier(baseConfig()).send(alert);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts a webhook request that does not complete", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (_url: string, options: { signal?: AbortSignal }) =>
+      new Promise<never>((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () => reject(new Error("request aborted")), { once: true });
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { SlackNotifier } = await import("../src/notifiers/slack.ts");
+
+    const pending = new SlackNotifier(baseConfig()).send(alert);
+    const assertion = expect(pending).rejects.toThrow("request aborted");
+    await vi.advanceTimersByTimeAsync(15_000);
+    await assertion;
+    vi.useRealTimers();
+  });
+
   it("MacosNotifier uses NotificationCenter only when enabled on macOS", async () => {
     const notifyMock = vi.fn((_: unknown, cb: (err: Error | null) => void) => cb(null));
     const notificationCenterCtor = vi.fn(function NotificationCenterMock() {

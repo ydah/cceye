@@ -118,6 +118,11 @@ export interface UsageSummary {
   bySession: UsageBreakdown[];
 }
 
+export interface UsageTrendPoint {
+  hourStartMs: number;
+  amountNanos: MoneyNanos | null;
+}
+
 export interface AlertInstance {
   id: string;
   fingerprint: string;
@@ -176,6 +181,8 @@ export interface IntegrityResult {
 
 export interface UsageTransaction extends UsageStorage {
   transaction<T>(fn: (tx: UsageTransaction) => T): Promise<T>;
+  createAlertSync(alert: AlertInstance): void;
+  enqueueDeliverySync(delivery: PendingDelivery): void;
 }
 
 export interface UsageStorage {
@@ -194,6 +201,7 @@ export interface UsageStorage {
     pricingCatalog?: PricingCatalog | undefined;
   }): Promise<{ inserted: number; duplicates: number }>;
   queryUsage(query: UsageQuery): Promise<UsageSummary>;
+  queryHourlyTrend(query: UsageQuery): Promise<UsageTrendPoint[]>;
   createAlert(alert: AlertInstance): Promise<void>;
   getAlert(id: string): Promise<AlertInstance | null>;
   hasDeliveredDelivery(alertId: string, transition: PendingDelivery["transition"]): Promise<boolean>;

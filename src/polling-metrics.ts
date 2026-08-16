@@ -12,6 +12,7 @@ export function toProjectBreakdown(byProject: Record<string, number | null>): Pr
 export function hourlyTrend(entries: UsageEntry[]): TrendPoint[] {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   const buckets = new Map<string, number>();
+  const unpricedBuckets = new Set<string>();
 
   for (const entry of entries) {
     const timestamp = entry.timestamp.getTime();
@@ -21,10 +22,15 @@ export function hourlyTrend(entries: UsageEntry[]): TrendPoint[] {
     const hour = new Date(entry.timestamp);
     hour.setMinutes(0, 0, 0);
     const key = hour.toISOString();
-    buckets.set(key, (buckets.get(key) ?? 0) + (entry.costUSD ?? 0));
+    if (entry.costUSD === null) {
+      unpricedBuckets.add(key);
+      continue;
+    }
+    buckets.set(key, (buckets.get(key) ?? 0) + entry.costUSD);
   }
 
   return Array.from(buckets.entries())
+    .filter(([hour]) => !unpricedBuckets.has(hour))
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([hour, cost]) => ({ hour, cost }));
 }

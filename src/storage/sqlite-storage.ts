@@ -20,6 +20,7 @@ import type {
   UsageQuery,
   UsageStorage,
   UsageSummary,
+  UsageTrendPoint,
   UsageTransaction,
 } from "./storage.js";
 
@@ -53,7 +54,9 @@ export class SqliteUsageStorage implements UsageStorage {
         }
       }
     } catch (error) {
-      database?.close();
+      if (database?.open) {
+        database.close();
+      }
       const failedPath = preserveFailedDatabase(databasePath);
       throw new Error(`database could not be opened; preserved failed database at ${failedPath}: ${String(error)}`);
     }
@@ -94,7 +97,9 @@ export class SqliteUsageStorage implements UsageStorage {
     try {
       migrate();
     } catch (error) {
-      this.database.close();
+      if (this.database.open) {
+        this.database.close();
+      }
       const failedPath = preserveFailedDatabase(this.databasePath);
       throw new Error(`database migration failed; preserved failed database at ${failedPath}: ${String(error)}`);
     }
@@ -221,7 +226,8 @@ export class SqliteUsageStorage implements UsageStorage {
                 SUM(output_tokens) AS output_tokens,
                 SUM(cache_creation_tokens) AS cache_creation_tokens,
                 SUM(cache_read_tokens) AS cache_read_tokens,
-                SUM(${costExpression}) AS total_amount_nanos,
+                CASE WHEN SUM(CASE WHEN ${costExpression} IS NULL THEN 1 ELSE 0 END) > 0
+                     THEN NULL ELSE SUM(${costExpression}) END AS total_amount_nanos,
                 SUM(CASE WHEN ${costExpression} IS NOT NULL THEN 1 ELSE 0 END) AS priced_events,
                 SUM(CASE WHEN ${costExpression} IS NOT NULL THEN input_tokens ELSE 0 END) AS priced_input_tokens
            FROM usage_events e
@@ -250,7 +256,31 @@ export class SqliteUsageStorage implements UsageStorage {
     return { ...summaryBase, byModel, byProject, bySession };
   }
 
+  async queryHourlyTrend(query: UsageQuery): Promise<UsageTrendPoint[]> {
+    const costExpression = this.costExpression(query.basis);
+    const rows = this.database
+      .prepare(
+        `SELECT CAST(occurred_at_ms / 3600000 AS INTEGER) * 3600000 AS hour_ms,
+                CASE WHEN SUM(CASE WHEN ${costExpression} IS NULL THEN 1 ELSE 0 END) > 0
+                     THEN NULL ELSE SUM(${costExpression}) END AS amount_nanos
+           FROM usage_events e
+           LEFT JOIN event_costs c ON c.event_id = e.event_id AND c.basis = ?
+          WHERE occurred_at_ms >= ? AND occurred_at_ms < ?
+          GROUP BY hour_ms
+          ORDER BY hour_ms ASC`
+      )
+      .all(query.basis, query.fromMs, query.untilMs) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      hourStartMs: toNumber(row.hour_ms),
+      amountNanos: toNullableBigInt(row.amount_nanos),
+    }));
+  }
+
   async createAlert(alert: AlertInstance): Promise<void> {
+    this.createAlertSync(alert);
+  }
+
+  createAlertSync(alert: AlertInstance): void {
     this.database
       .prepare(
         `INSERT INTO alert_instances
@@ -291,6 +321,10 @@ export class SqliteUsageStorage implements UsageStorage {
   }
 
   async enqueueDelivery(delivery: PendingDelivery): Promise<void> {
+    this.enqueueDeliverySync(delivery);
+  }
+
+  enqueueDeliverySync(delivery: PendingDelivery): void {
     this.database
       .prepare(
         `INSERT OR IGNORE INTO delivery_outbox
@@ -595,7 +629,9 @@ export class SqliteUsageStorage implements UsageStorage {
   }
 
   async close(): Promise<void> {
-    this.database.close();
+    if (this.database.open) {
+      this.database.close();
+    }
   }
 
   private insertUsageEventsSync(events: NormalizedUsageEvent[]): { inserted: number; duplicates: number } {
@@ -715,7 +751,8 @@ export class SqliteUsageStorage implements UsageStorage {
     const rows = this.database
       .prepare(
         `SELECT ${keyExpression} AS key,
-                SUM(${costExpression}) AS amount_nanos,
+                CASE WHEN SUM(CASE WHEN ${costExpression} IS NULL THEN 1 ELSE 0 END) > 0
+                     THEN NULL ELSE SUM(${costExpression}) END AS amount_nanos,
                 COUNT(*) AS events,
                 SUM(CASE WHEN ${costExpression} IS NULL THEN 1 ELSE 0 END) AS unpriced_events
                 ${includeTokenMetrics ? `,

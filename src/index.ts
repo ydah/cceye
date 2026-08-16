@@ -438,7 +438,6 @@ export async function pollOnce(
   const collection = await collectUsageIncrementally(config, ledger, pricing, logger);
   const drained = await drainDeliveryOutbox(ledger, router, logger, { maxRetries: config.alerts.max_retries });
   await applyDeliveredOutboxState(state, ledger, drained.deliveredDeliveries);
-  const entries = collection.entries;
   const basis = config.cost_mode === "display" ? "reported" : config.cost_mode === "calculate" ? "estimated" : "hybrid";
   const dailySummary = await ledger.queryUsage({ ...periodRange("daily", config.timezone), basis });
   const weeklySummary = await ledger.queryUsage({ ...periodRange("weekly", config.timezone), basis });
@@ -514,7 +513,7 @@ export async function pollOnce(
       deliveredAtMs: null,
     }));
     await ledger.transaction((tx) => {
-      void tx.createAlert({
+      tx.createAlertSync({
         id: alertId,
         fingerprint: alertFingerprint,
         windowKey: result.window,
@@ -528,7 +527,7 @@ export async function pollOnce(
         resolvedAtMs: null,
       });
       for (const delivery of pendingDeliveries) {
-        void tx.enqueueDelivery(delivery);
+        tx.enqueueDeliverySync(delivery);
       }
     });
 
@@ -632,7 +631,7 @@ export async function pollOnce(
         deliveredAtMs: null,
       }));
       await ledger.transaction((tx) => {
-        void tx.createAlert({
+        tx.createAlertSync({
           id: alertId,
           fingerprint: recoveryFingerprint,
           windowKey: window,
@@ -646,7 +645,7 @@ export async function pollOnce(
           resolvedAtMs: timestamp.getTime(),
         });
         for (const delivery of pendingDeliveries) {
-          void tx.enqueueDelivery(delivery);
+          tx.enqueueDeliverySync(delivery);
         }
       });
       const deliveryResults = await Promise.all(
@@ -730,9 +729,20 @@ export async function pollOnce(
     pricing.status,
     collection.metrics
   );
-  if (entries.length > 0) {
-    updateHourlyTrend(data, hourlyTrend(entries));
-  }
+  const trendFromMs = Date.now() - 24 * 60 * 60 * 1000;
+  const trend = await ledger.queryHourlyTrend({
+    fromMs: trendFromMs,
+    untilMs: Date.now() + 1,
+    basis,
+  });
+  updateHourlyTrend(
+    data,
+    trend.flatMap((point) =>
+      point.amountNanos === null
+        ? []
+        : [{ hour: new Date(point.hourStartMs).toISOString(), cost: Number(point.amountNanos) / 1_000_000_000 }]
+    )
+  );
   markUpdated(data);
   saveData(data);
 
@@ -1404,6 +1414,9 @@ function errorExitCode(error: unknown): number {
   }
   if (message.includes("unpriced") || message.includes("incomplete")) {
     return 4;
+  }
+  if (message.includes("no valid Claude data directories")) {
+    return 3;
   }
   return 1;
 }

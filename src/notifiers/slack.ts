@@ -11,6 +11,7 @@ export class SlackNotifier implements Notifier {
   private enabled: boolean;
   private webhookUrl: string | undefined;
   private mention: string;
+  private readonly timeoutMilliseconds = 15_000;
 
   constructor(config: NotificationConfig) {
     this.enabled = config.notifications.slack.enabled;
@@ -54,14 +55,23 @@ export class SlackNotifier implements Notifier {
       ],
     };
 
-    const response = await fetch(this.webhookUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(alert.idempotencyKey ? { "X-Cceye-Idempotency-Key": alert.idempotencyKey } : {}),
-      },
-      body: JSON.stringify(payload),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMilliseconds);
+    timeout.unref?.();
+    let response: Response;
+    try {
+      response = await fetch(this.webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(alert.idempotencyKey ? { "X-Cceye-Idempotency-Key": alert.idempotencyKey } : {}),
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!response.ok) {
       throw new Error(`slack webhook request failed with status ${response.status}`);
     }

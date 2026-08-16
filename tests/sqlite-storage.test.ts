@@ -87,6 +87,9 @@ describe("SqliteUsageStorage", () => {
         pricedInputTokens: 100,
       },
     ]);
+    await expect(storage.queryHourlyTrend({ fromMs: 0, untilMs: 1000, basis: "estimated" })).resolves.toEqual([
+      { hourStartMs: 0, amountNanos: 456n },
+    ]);
     await storage.insertEventCosts([
       {
         eventId: "event-1",
@@ -111,6 +114,74 @@ describe("SqliteUsageStorage", () => {
       payloadJson: JSON.stringify({ model: "price" }),
     });
     await expect(storage.getPricingCatalog("hash")).resolves.toMatchObject({ payloadJson: '{"model":"price"}' });
+  });
+
+  it("does not turn a partial priced total into a complete-looking amount", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cceye-ledger-"));
+    const storage = new SqliteUsageStorage(path.join(directory, "cceye.db"));
+    storages.push(storage);
+    await storage.migrate();
+    const source = {
+      sourceKind: "claude",
+      canonicalPath: "/tmp/project/partial.jsonl",
+      fileIdentity: "partial-file",
+    } as const;
+    await storage.insertUsageEvents([
+      {
+        eventId: "partial-priced",
+        source,
+        generation: 0,
+        occurredAtMs: 100,
+        project: "project",
+        session: "session",
+        modelRaw: "priced-model",
+        inputTokens: 1,
+        outputTokens: 1,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        reportedCostNanos: null,
+        schemaFingerprint: null,
+        ingestedAtMs: 1,
+      },
+      {
+        eventId: "partial-unpriced",
+        source,
+        generation: 0,
+        occurredAtMs: 200,
+        project: "project",
+        session: "session",
+        modelRaw: "unknown-model",
+        inputTokens: 1,
+        outputTokens: 1,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        reportedCostNanos: null,
+        schemaFingerprint: null,
+        ingestedAtMs: 2,
+      },
+    ]);
+    await storage.insertEventCosts([
+      {
+        eventId: "partial-priced",
+        basis: "estimated",
+        amountNanos: 100n,
+        currency: "USD",
+        priceSource: "test",
+        priceCatalogHash: null,
+        matchedModel: "priced-model",
+        matchType: "exact",
+        calculatedAtMs: 3,
+      },
+    ]);
+
+    const summary = await storage.queryUsage({ fromMs: 0, untilMs: 1000, basis: "estimated" });
+    expect(summary.totalAmountNanos).toBeNull();
+    expect(summary.coverage).toMatchObject({ pricedEvents: 1, unpricedEvents: 1, complete: false });
+    expect(summary.byModel).toEqual([
+      { key: "priced-model", amountNanos: 100n, events: 1, unpricedEvents: 0 },
+      { key: "unknown-model", amountNanos: null, events: 1, unpricedEvents: 1 },
+    ]);
+    expect(summary.byProject).toEqual([{ key: "project", amountNanos: null, events: 2, unpricedEvents: 1 }]);
   });
 
   it("stores and loads durable file cursors", async () => {
@@ -141,7 +212,7 @@ describe("SqliteUsageStorage", () => {
     storages.push(storage);
     await storage.migrate();
     await storage.transaction((tx) => {
-      void tx.createAlert({
+      tx.createAlertSync({
         id: "alert-1",
         fingerprint: "daily:warning:1",
         windowKey: "daily",
@@ -192,5 +263,45 @@ describe("SqliteUsageStorage", () => {
       events: 0,
       totalAmountNanos: null,
     });
+  });
+
+  it("rolls back synchronous transactional alert writes when a later write fails", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cceye-ledger-"));
+    const storage = new SqliteUsageStorage(path.join(directory, "cceye.db"));
+    storages.push(storage);
+    await storage.migrate();
+
+    await expect(
+      storage.transaction((tx) => {
+        tx.createAlertSync({
+          id: "alert-rollback",
+          fingerprint: "daily:warning:rollback",
+          windowKey: "daily",
+          windowStartMs: 0,
+          level: "warning",
+          state: "firing",
+          currentAmountNanos: 1n,
+          thresholdAmountNanos: 1n,
+          firstSeenAtMs: 1,
+          lastSeenAtMs: 1,
+          resolvedAtMs: null,
+        });
+        tx.enqueueDeliverySync({
+          id: "delivery-rollback",
+          alertId: "missing-alert",
+          channel: "test",
+          transition: "firing",
+          status: "pending",
+          attempts: 0,
+          nextAttemptAtMs: 0,
+          lastError: null,
+          idempotencyKey: "rollback",
+          createdAtMs: 1,
+          deliveredAtMs: null,
+        });
+      })
+    ).rejects.toThrow();
+
+    await expect(storage.getAlert("alert-rollback")).resolves.toBeNull();
   });
 });

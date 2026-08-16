@@ -73,7 +73,7 @@ describe("aggregateByPeriod", () => {
     vi.useRealTimers();
   });
 
-  it("treats missing costUSD as zero", () => {
+  it("keeps missing costUSD unpriced instead of treating it as zero", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-02-11T12:00:00.000Z"));
 
@@ -94,9 +94,9 @@ describe("aggregateByPeriod", () => {
       "UTC"
     );
 
-    expect(result.total).toBe(0);
-    expect(result.byModel).toEqual({ m: 0 });
-    expect(result.byProject).toEqual({ "project-c": 0 });
+    expect(result.total).toBeNull();
+    expect(result.byModel).toEqual({ m: null });
+    expect(result.byProject).toEqual({ "project-c": null });
     expect(result.tokenBreakdown).toEqual({
       input: 3,
       output: 4,

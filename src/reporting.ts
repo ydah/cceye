@@ -119,16 +119,13 @@ export function buildReportRows(entries: UsageEntry[], command: ReportCommand, o
     bucket.outputTokens += entry.outputTokens;
     bucket.cacheCreationTokens += entry.cacheCreationTokens;
     bucket.cacheReadTokens += entry.cacheReadTokens;
-    bucket.byModel[entry.model] = addNullableCost(bucket.byModel[entry.model] ?? 0, entry.costUSD);
-    bucket.byProject[project] = addNullableCost(bucket.byProject[project] ?? 0, entry.costUSD);
+    addBreakdownCost(bucket.byModel, entry.model, entry.costUSD);
+    addBreakdownCost(bucket.byProject, project, entry.costUSD);
     const session = entry.session ?? "unknown";
     if (!bucket.bySession) {
       bucket.bySession = {};
     }
-    bucket.bySession[`${project}/${session}`] = addNullableCost(
-      bucket.bySession[`${project}/${session}`] ?? 0,
-      entry.costUSD
-    );
+    addBreakdownCost(bucket.bySession, `${project}/${session}`, entry.costUSD);
     buckets.set(key, bucket);
   }
 
@@ -301,4 +298,9 @@ const addNullableCost = (current: number | null, amount: number | null): number 
     return null;
   }
   return current + amount;
+};
+
+const addBreakdownCost = (breakdown: Record<string, number | null>, key: string, amount: number | null): void => {
+  const current = Object.prototype.hasOwnProperty.call(breakdown, key) ? breakdown[key]! : 0;
+  breakdown[key] = addNullableCost(current, amount);
 };

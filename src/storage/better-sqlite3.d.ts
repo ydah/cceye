@@ -13,6 +13,7 @@ declare module "better-sqlite3" {
       prepare(source: string): Statement;
       transaction<T>(fn: () => T): () => T;
       backup(filename: string): Promise<unknown>;
+      readonly open: boolean;
       close(): void;
     }
   }

@@ -129,32 +129,32 @@ describe("usage baseline regression", () => {
   it.each([
     {
       mode: "auto" as const,
-      total: 4.3571,
+      total: null,
       byModel: {
         "claude-sonnet-4-20250514": 0.9921,
         "anthropic/claude-sonnet-4-20250514": 3.165,
         unknown: 0.2,
-        "unknown-model": 0,
+        "unknown-model": null,
       },
     },
     {
       mode: "calculate" as const,
-      total: 3.168228,
+      total: null,
       byModel: {
         "claude-sonnet-4-20250514": 0.003228,
         "anthropic/claude-sonnet-4-20250514": 3.165,
-        unknown: 0,
-        "unknown-model": 0,
+        unknown: null,
+        "unknown-model": null,
       },
     },
     {
       mode: "display" as const,
-      total: 1.19,
+      total: null,
       byModel: {
-        "claude-sonnet-4-20250514": 0.99,
-        "anthropic/claude-sonnet-4-20250514": 0,
+        "claude-sonnet-4-20250514": null,
+        "anthropic/claude-sonnet-4-20250514": null,
         unknown: 0.2,
-        "unknown-model": 0,
+        "unknown-model": null,
       },
     },
   ])("keeps deterministic daily totals in $mode mode", async ({ mode, total, byModel }) => {
@@ -162,19 +162,23 @@ describe("usage baseline regression", () => {
     const entries = await collectUsageEntries(createConfig(mode), state, createPricing(), { warn: vi.fn() });
     const daily = aggregateByPeriod(entries, "daily", "UTC");
 
-    expect(daily.total).toBeCloseTo(total, 8);
+    expect(daily.total).toBe(total);
     expect(daily.tokenBreakdown).toEqual({
       input: 300370,
       output: 100185,
       cacheCreation: 200020,
       cacheRead: 50010,
     });
-    expect(daily.byModel["claude-sonnet-4-20250514"]).toBeCloseTo(byModel["claude-sonnet-4-20250514"], 8);
-    expect(daily.byModel["anthropic/claude-sonnet-4-20250514"]).toBeCloseTo(
-      byModel["anthropic/claude-sonnet-4-20250514"],
-      8
-    );
-    expect(daily.byModel.unknown).toBeCloseTo(byModel.unknown, 8);
-    expect(daily.byModel["unknown-model"]).toBeCloseTo(byModel["unknown-model"], 8);
+    const expectCost = (actual: number | null | undefined, expected: number | null): void => {
+      if (expected === null) {
+        expect(actual).toBeNull();
+      } else {
+        expect(actual).toBeCloseTo(expected, 8);
+      }
+    };
+    expectCost(daily.byModel["claude-sonnet-4-20250514"], byModel["claude-sonnet-4-20250514"]);
+    expectCost(daily.byModel["anthropic/claude-sonnet-4-20250514"], byModel["anthropic/claude-sonnet-4-20250514"]);
+    expectCost(daily.byModel.unknown, byModel.unknown);
+    expectCost(daily.byModel["unknown-model"], byModel["unknown-model"]);
   });
 });

@@ -18,8 +18,8 @@ function calculateTieredCost(tokens: number, basePerMTok: number, abovePerMTok?:
   return (belowThresholdTokens * basePerMTok + aboveThresholdTokens * abovePerMTok) / 1_000_000;
 }
 
-export function calculateCost(entry: UsageEntry, mode: CostMode, pricing: ModelPricing): number {
-  return calculateCostExact(entry, mode, pricing) ?? 0;
+export function calculateCost(entry: UsageEntry, mode: CostMode, pricing: ModelPricing): number | null {
+  return calculateCostExact(entry, mode, pricing);
 }
 
 export function calculateCostExact(entry: UsageEntry, mode: CostMode, pricing: ModelPricing): number | null {

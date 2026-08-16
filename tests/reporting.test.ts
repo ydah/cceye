@@ -85,6 +85,21 @@ describe("buildReportRows", () => {
     printReportRows(rows, { json: false, breakdown: false, timezone: "UTC" });
     expect(String(log.mock.calls[0]?.[0])).toContain("UNPRICED");
   });
+
+  it("does not recover a priced breakdown after an unpriced event", () => {
+    const rows = buildReportRows(
+      [entry({ costUSD: null }), entry({ costUSD: 0.2 })],
+      "daily",
+      { since: "20260215", until: "20260215", json: false, breakdown: true, timezone: "UTC" }
+    );
+
+    expect(rows[0]).toMatchObject({
+      totalCost: null,
+      byModel: { "claude-sonnet-4-20250514": null },
+      byProject: { "project-a": null },
+      bySession: { "project-a/session-one": null },
+    });
+  });
 });
 
 describe("printReportRows", () => {
