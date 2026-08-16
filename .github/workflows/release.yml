@@ -45,11 +45,21 @@ jobs:
       - name: Run typecheck
         run: npm run typecheck
 
-      - name: Run tests
-        run: npm test
+      - name: Run tests with coverage
+        run: npm run test:coverage
 
       - name: Build
         run: npm run build
+
+      - name: Package smoke test
+        run: |
+          PACKAGE_TARBALL="$(npm pack --silent)"
+          SMOKE_DIR="$(mktemp -d)"
+          cd "$SMOKE_DIR"
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE/$PACKAGE_TARBALL" >/dev/null
+          npx cceye --version
+          npx cceye --help || true
 
       - name: Publish to npm (Trusted Publishing)
         run: npm publish --provenance

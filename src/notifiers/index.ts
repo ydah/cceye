@@ -1,4 +1,4 @@
-import type { Alert, Notifier, NotificationConfig } from "./types.js";
+import type { Alert, DeliveryResult, Notifier, NotificationConfig } from "./types.js";
 import { ConsoleNotifier } from "./console.js";
 import { MacosNotifier } from "./macos.js";
 import { SlackNotifier } from "./slack.js";
@@ -23,14 +23,30 @@ export class NotificationRouter {
     }
   }
 
-  async send(alert: Alert): Promise<string[]> {
+  async sendDetailed(alert: Alert): Promise<DeliveryResult[]> {
     const results = await Promise.allSettled(this.notifiers.map((notifier) => notifier.send(alert)));
-    const channels: string[] = [];
-    results.forEach((result, index) => {
+    return results.map((result, index) => {
+      const channel = this.notifiers[index]?.name ?? "unknown";
       if (result.status === "fulfilled") {
-        channels.push(this.notifiers[index]?.name ?? "unknown");
+        return { channel, status: "success" };
       }
+      return { channel, status: "failed", error: redactSecret(result.reason) };
     });
-    return channels;
   }
+
+  /**
+   * Compatibility wrapper for callers that only need successful channel names.
+   * New delivery-aware code should use sendDetailed.
+   */
+  async send(alert: Alert): Promise<string[]> {
+    const results = await this.sendDetailed(alert);
+    return results.filter((result) => result.status === "success").map((result) => result.channel);
+  }
+}
+
+function redactSecret(value: unknown): string {
+  const message = value instanceof Error ? value.message : String(value);
+  return message
+    .replace(/https?:\/\/[^\s]+/gi, "[redacted-url]")
+    .replace(/(password|passwd|token|secret|api[_-]?key)\s*[:=]\s*[^\s,]+/gi, "$1=[redacted]");
 }

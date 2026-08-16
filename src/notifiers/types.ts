@@ -11,6 +11,11 @@ export interface Notifier {
   send(alert: Alert): Promise<void>;
 }
 
+export type DeliveryResult =
+  | { channel: string; status: "success" }
+  | { channel: string; status: "failed"; error: string }
+  | { channel: string; status: "skipped"; reason: string };
+
 export interface NotificationConfig {
   notifications: {
     console: {

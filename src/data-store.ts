@@ -4,6 +4,7 @@ import path from "path";
 import { formatISO } from "date-fns";
 import { z } from "zod";
 import type { WindowKey } from "./state-store.js";
+import type { DeliveryResult } from "./notifiers/types.js";
 
 export interface ModelCost {
   model: string;
@@ -27,6 +28,7 @@ export interface NotificationHistoryEntry {
   currentCost: number;
   threshold: number;
   channels: string[];
+  deliveryResults?: DeliveryResult[] | undefined;
 }
 
 export interface DataStoreState {
@@ -64,6 +66,15 @@ const notificationHistoryEntrySchema = z.object({
   currentCost: z.number(),
   threshold: z.number(),
   channels: z.array(z.string()),
+  deliveryResults: z
+    .array(
+      z.union([
+        z.object({ channel: z.string(), status: z.literal("success") }),
+        z.object({ channel: z.string(), status: z.literal("failed"), error: z.string() }),
+        z.object({ channel: z.string(), status: z.literal("skipped"), reason: z.string() }),
+      ])
+    )
+    .optional(),
 });
 
 const dataStoreSchema = z
@@ -163,10 +174,13 @@ export function loadData(): DataStoreState {
 
 export function saveData(data: DataStoreState): void {
   const dir = path.dirname(dataFilePath);
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
   const tempPath = `${dataFilePath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), { mode: 0o600 });
+  fs.chmodSync(tempPath, 0o600);
   fs.renameSync(tempPath, dataFilePath);
+  fs.chmodSync(dataFilePath, 0o600);
 }
 
 export function updateCurrentCosts(data: DataStoreState, costs: Record<WindowKey, number>): void {

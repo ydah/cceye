@@ -70,7 +70,7 @@ Each report supports date filters and JSON output options.
 
 ### Smart Pricing Cache
 
-Pricing is fetched from LiteLLM and cached at `~/.config/cceye/pricing-cache.json` (24h TTL), with fallback prices for known models.
+Pricing is fetched from LiteLLM and cached at `~/.config/cceye/pricing-cache.json` (24h TTL), with fallback prices for known models. Network failures are reported as stale/fallback pricing and do not stop local monitoring.
 
 ### macOS Background Service
 
@@ -182,7 +182,7 @@ Commands:
   - `--timezone <IANA TZ>`
   - `--offline`
 - If not installed globally, run commands with `npx cceye <command>`.
-- Starting with no arguments (`cceye`) clears notification cooldown flags once before daemon startup.
+- Notification cooldown state survives daemon restarts. Use an explicit state-management command when a manual reset is needed.
 
 ## Configuration
 
@@ -215,7 +215,7 @@ See `config.example.yaml` for a complete template.
 | `notifications.email.*` | SMTP sender/recipient/auth settings |
 | `notification_cooldown_minutes` | Cooldown for repeated alerts of same window/level |
 | `log_level` | `debug`, `info`, `warn`, `error` |
-| `dashboard.refresh_interval_seconds` | Required setting (currently not used by runtime logic) |
+| `dashboard.refresh_interval_seconds` | Dashboard redraw interval; independent from usage polling |
 
 ### Validation rules
 

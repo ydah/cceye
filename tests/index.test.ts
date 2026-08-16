@@ -234,6 +234,25 @@ describe("index.ts", () => {
     expect(logSpy).toHaveBeenCalledWith(packageJson.version);
   });
 
+  it("prints help without requiring a config file", async () => {
+    const index = await import("../src/index.ts");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await expect(index.main(["--help"])).resolves.toBeUndefined();
+
+    expect(String(logSpy.mock.calls[0]?.[0])).toContain("Usage: cceye");
+  });
+
+  it("supports JSON status output", async () => {
+    const index = await import("../src/index.ts");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await index.main(["status", "--json", "--config", configPath]);
+
+    const output = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0])) as Record<string, number>;
+    expect(output).toMatchObject({ daily: expect.any(Number), weekly: expect.any(Number), monthly: expect.any(Number) });
+  });
+
   it("treats symlinked executable path as direct run", async () => {
     const index = await import("../src/index.ts");
     const actualScriptPath = path.join(tempRoot, "actual-index.js");
