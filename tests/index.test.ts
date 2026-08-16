@@ -380,6 +380,7 @@ describe("index.ts", () => {
 
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-16T12:00:00.000Z"));
+    writeUsageLog(dataDir);
     const config = loadConfig(configPath);
     config.thresholds.daily.warning = 0.001;
     config.thresholds.daily.critical = 1;
