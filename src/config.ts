@@ -38,6 +38,10 @@ const dashboardSchema = z.object({
   refresh_interval_seconds: z.number().int().positive(),
 });
 
+const storageSchema = z.object({
+  database_path: z.string().min(1).default("~/.config/cceye/cceye.db"),
+});
+
 const configSchema = z
   .object({
     claude_data_dir: z.string().min(1).default("~/.claude/projects"),
@@ -53,6 +57,7 @@ const configSchema = z
     notification_cooldown_minutes: z.number().int().positive(),
     log_level: z.enum(["debug", "info", "warn", "error"]),
     dashboard: dashboardSchema,
+    storage: storageSchema.default({ database_path: "~/.config/cceye/cceye.db" }),
   })
   .superRefine((value, context) => {
     if (value.polling_interval_milliseconds === undefined) {
@@ -165,6 +170,10 @@ export function loadConfig(argPath?: string): Config {
   return {
     ...result.data,
     claude_data_dir: expandHome(result.data.claude_data_dir),
+    storage: {
+      ...result.data.storage,
+      database_path: expandHome(result.data.storage.database_path),
+    },
   };
 }
 

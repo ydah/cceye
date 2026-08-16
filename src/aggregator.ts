@@ -14,6 +14,21 @@ export interface AggregatedCost {
   };
 }
 
+export function periodRange(
+  period: "daily" | "weekly" | "monthly",
+  timezone: string,
+  now = new Date()
+): { fromMs: number; untilMs: number } {
+  const zonedNow = toZonedTime(now, timezone);
+  const startLocal =
+    period === "daily"
+      ? startOfDay(zonedNow)
+      : period === "weekly"
+        ? startOfWeek(zonedNow, { weekStartsOn: 1 })
+        : startOfMonth(zonedNow);
+  return { fromMs: fromZonedTime(startLocal, timezone).getTime(), untilMs: now.getTime() + 1 };
+}
+
 export function aggregateByPeriod(
   entries: UsageEntry[],
   period: "daily" | "weekly" | "monthly",

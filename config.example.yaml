@@ -58,3 +58,7 @@ log_level: "info"
 # Dashboard settings
 dashboard:
   refresh_interval_seconds: 60
+
+# Transactional usage ledger
+storage:
+  database_path: "~/.config/cceye/cceye.db"

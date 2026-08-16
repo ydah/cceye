@@ -118,51 +118,55 @@ export async function parseSessionFile(
 
   for await (const line of rl) {
     parsedBytes += Buffer.byteLength(line, "utf8") + 1;
-    if (!line.trim()) {
-      continue;
-    }
-    try {
-      const parsedLine = sessionLineSchema.safeParse(JSON.parse(line) as unknown);
-      if (!parsedLine.success) {
-        continue;
-      }
-
-      const parsed = parsedLine.data;
-      const usage = parsed.message?.usage;
-      if (!usage) {
-        continue;
-      }
-
-      const totalCacheCreation =
-        typeof usage.cache_creation_input_tokens === "number"
-          ? usage.cache_creation_input_tokens
-          : 0;
-      const cacheReadTokens = typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0;
-      const timestamp = new Date(parsed.timestamp);
-      if (Number.isNaN(timestamp.getTime())) {
-        continue;
-      }
-
-      entries.push({
-        timestamp,
-        model:
-          typeof parsed.message?.model === "string"
-            ? parsed.message.model
-            : typeof parsed.model === "string"
-              ? parsed.model
-              : "unknown",
-        inputTokens: usage.input_tokens,
-        outputTokens: usage.output_tokens,
-        cacheCreationTokens: totalCacheCreation,
-        cacheReadTokens,
-        messageId: typeof parsed.message?.id === "string" ? parsed.message.id : null,
-        requestId: typeof parsed.requestId === "string" ? parsed.requestId : null,
-        costUSD: toOptionalNumber(parsed.costUSD),
-      });
-    } catch {
-      continue;
+    const entry = parseUsageLine(line);
+    if (entry) {
+      entries.push(entry);
     }
   }
 
   return { entries, parsedBytes };
+}
+
+export function parseUsageLine(line: string | Buffer): UsageEntry | null {
+  const text = typeof line === "string" ? line : line.toString("utf8");
+  if (!text.trim()) {
+    return null;
+  }
+  try {
+    const parsedLine = sessionLineSchema.safeParse(JSON.parse(text) as unknown);
+    if (!parsedLine.success) {
+      return null;
+    }
+
+    const parsed = parsedLine.data;
+    const usage = parsed.message?.usage;
+    if (!usage) {
+      return null;
+    }
+
+    const timestamp = new Date(parsed.timestamp);
+    if (Number.isNaN(timestamp.getTime())) {
+      return null;
+    }
+
+    return {
+      timestamp,
+      model:
+        typeof parsed.message?.model === "string"
+          ? parsed.message.model
+          : typeof parsed.model === "string"
+            ? parsed.model
+            : "unknown",
+      inputTokens: usage.input_tokens,
+      outputTokens: usage.output_tokens,
+      cacheCreationTokens:
+        typeof usage.cache_creation_input_tokens === "number" ? usage.cache_creation_input_tokens : 0,
+      cacheReadTokens: typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0,
+      messageId: typeof parsed.message?.id === "string" ? parsed.message.id : null,
+      requestId: typeof parsed.requestId === "string" ? parsed.requestId : null,
+      costUSD: toOptionalNumber(parsed.costUSD),
+    };
+  } catch {
+    return null;
+  }
 }

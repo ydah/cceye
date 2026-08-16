@@ -32,8 +32,11 @@ import {
 import { Scheduler } from "./scheduler.js";
 import { Dashboard } from "./dashboard/index.js";
 import { loadPricing } from "./pricing.js";
-import { aggregateByPeriod } from "./aggregator.js";
+import { periodRange } from "./aggregator.js";
 import { collectUsageEntries } from "./usage-collector.js";
+import { collectUsageIncrementally } from "./ingestion/incremental-collector.js";
+import { SqliteUsageStorage } from "./storage/sqlite-storage.js";
+import type { UsageStorage, UsageSummary } from "./storage/storage.js";
 import { hourlyTrend, nextPoll, toModelBreakdown, toProjectBreakdown } from "./polling-metrics.js";
 import { buildReportRows, printReportRows, type ReportCommand, type ReportOptions } from "./reporting.js";
 
@@ -245,6 +248,8 @@ export async function startDaemon(
   logger.silent = options.dashboard || !options.debug;
   const router = new NotificationRouter(config, { suppressConsole: options.dashboard });
   const pricing = await loadPricing();
+  const storage = new SqliteUsageStorage(config.storage.database_path);
+  await storage.migrate();
   let dashboardRef: Dashboard | undefined;
   let pollInFlight = false;
   const runPoll = async (): Promise<void> => {
@@ -254,7 +259,7 @@ export async function startDaemon(
     }
     pollInFlight = true;
     try {
-      await pollOnce(config, pricing, router, logger, options.dashboard, dashboardRef);
+      await pollOnce(config, pricing, router, logger, options.dashboard, dashboardRef, true, storage);
     } finally {
       pollInFlight = false;
     }
@@ -281,6 +286,7 @@ export async function startDaemon(
       dashboardRefreshTimer = null;
     }
     dashboardRef?.destroy();
+    void storage.close();
     process.off("SIGINT", handleSigint);
     process.off("SIGTERM", handleSigterm);
     shutdown(logger);
@@ -332,16 +338,22 @@ export async function pollOnce(
   logger: ReturnType<typeof createLogger>,
   dashboardMode: boolean,
   dashboard?: Dashboard,
-  sendNotifications = true
+  sendNotifications = true,
+  storage?: UsageStorage
 ): Promise<void> {
+  const ledger = storage ?? new SqliteUsageStorage(config.storage.database_path);
+  if (!storage) {
+    await ledger.migrate();
+  }
   const state = loadState();
   resetWindowIfNeeded(state, config.timezone);
 
-  const entries = await collectUsageEntries(config, state, pricing, logger);
-
-  const daily = aggregateByPeriod(entries, "daily", config.timezone);
-  const weekly = aggregateByPeriod(entries, "weekly", config.timezone);
-  const monthly = aggregateByPeriod(entries, "monthly", config.timezone);
+  const collection = await collectUsageIncrementally(config, ledger, pricing, logger);
+  const entries = collection.entries;
+  const basis = config.cost_mode === "display" ? "reported" : config.cost_mode === "calculate" ? "estimated" : "hybrid";
+  const daily = toAggregatedCost(await ledger.queryUsage({ ...periodRange("daily", config.timezone), basis }));
+  const weekly = toAggregatedCost(await ledger.queryUsage({ ...periodRange("weekly", config.timezone), basis }));
+  const monthly = toAggregatedCost(await ledger.queryUsage({ ...periodRange("monthly", config.timezone), basis }));
 
   const results = evaluateThresholds(
     { daily: daily.total, weekly: weekly.total, monthly: monthly.total },
@@ -421,7 +433,9 @@ export async function pollOnce(
     weekly: toProjectBreakdown(weekly.byProject),
     monthly: toProjectBreakdown(monthly.byProject),
   });
-  updateHourlyTrend(data, hourlyTrend(entries));
+  if (entries.length > 0) {
+    updateHourlyTrend(data, hourlyTrend(entries));
+  }
   markUpdated(data);
   saveData(data);
 
@@ -431,13 +445,40 @@ export async function pollOnce(
   }
 
   logger.info("polling cycle completed");
+  if (!storage) {
+    await ledger.close();
+  }
 }
+
+function toAggregatedCost(summary: UsageSummary): {
+  total: number;
+  byModel: Record<string, number>;
+  byProject: Record<string, number>;
+  tokenBreakdown: { input: number; output: number; cacheCreation: number; cacheRead: number };
+} {
+  return {
+    total: nanosToNumber(summary.totalAmountNanos),
+    byModel: Object.fromEntries(summary.byModel.map((item) => [item.key, nanosToNumber(item.amountNanos)])),
+    byProject: Object.fromEntries(summary.byProject.map((item) => [item.key, nanosToNumber(item.amountNanos)])),
+    tokenBreakdown: {
+      input: summary.inputTokens,
+      output: summary.outputTokens,
+      cacheCreation: summary.cacheCreationTokens,
+      cacheRead: summary.cacheReadTokens,
+    },
+  };
+}
+
+const nanosToNumber = (amount: bigint | null): number => (amount === null ? 0 : Number(amount) / 1_000_000_000);
 
 export async function showStatus(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
   const config = loadConfigFromArgs(cliArgs);
   const logger = createLogger(config);
   const pricing = await loadPricing();
-  await pollOnce(config, pricing, new NotificationRouter(config), logger, false, undefined, false);
+  const storage = new SqliteUsageStorage(config.storage.database_path);
+  await storage.migrate();
+  await pollOnce(config, pricing, new NotificationRouter(config), logger, false, undefined, false, storage);
+  await storage.close();
   const data = loadData();
   const output = {
     daily: data.currentCosts.daily,

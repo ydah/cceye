@@ -66,6 +66,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
     "blessed": "^0.1.81",
     "blessed-contrib": "^4.11.0",
     "chalk": "^5.6.2",
@@ -80,5 +81,8 @@
   },
   "overrides": {
     "xml2js": "^0.6.2"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true
   }
 }
