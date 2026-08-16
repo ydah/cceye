@@ -33,6 +33,7 @@ describe("billing", () => {
       syncAnthropicBilling({ enabled: true, api_key_env: "CCEYE_TEST_ADMIN_KEY" }, storage, new Date(0), new Date(1))
     ).rejects.toThrow("authentication failed");
     process.env.CCEYE_TEST_ADMIN_KEY = "secret";
+    let amount = "1.25";
     vi.stubGlobal("fetch", vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -42,7 +43,7 @@ describe("billing", () => {
           {
             starting_at: "2026-08-01T00:00:00.000Z",
             ending_at: "2026-08-02T00:00:00.000Z",
-            results: [{ amount: "1.25", currency: "USD", description: "api" }],
+            results: [{ amount, currency: "USD", description: "api" }],
           },
         ],
         has_more: false,
@@ -55,6 +56,12 @@ describe("billing", () => {
     expect(first.records).toHaveLength(1);
     expect(second.records).toHaveLength(1);
     await expect(storage.queryBilling(0, Date.now() + 1)).resolves.toHaveLength(1);
+
+    amount = "2.50";
+    await syncAnthropicBilling(config, storage, new Date("2026-08-01"), new Date("2026-08-02"));
+    await expect(storage.queryBilling(0, Date.now() + 1)).resolves.toMatchObject([
+      expect.objectContaining({ amountNanos: 2_500_000_000n, revision: 2, isCurrent: true }),
+    ]);
   });
 
   it("keeps reconciliation dimensions honest", async () => {

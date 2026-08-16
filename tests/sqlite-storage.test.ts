@@ -74,6 +74,43 @@ describe("SqliteUsageStorage", () => {
     expect(summary.byModel).toEqual([
       { key: event.modelRaw, amountNanos: 456n, events: 1, unpricedEvents: 0 },
     ]);
+    expect(summary.bySession).toEqual([
+      {
+        key: "project/session",
+        amountNanos: 456n,
+        events: 1,
+        unpricedEvents: 0,
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheCreationTokens: 10,
+        cacheReadTokens: 20,
+        pricedInputTokens: 100,
+      },
+    ]);
+    await storage.insertEventCosts([
+      {
+        eventId: "event-1",
+        basis: "estimated",
+        amountNanos: 789n,
+        currency: "USD",
+        priceSource: "new",
+        priceCatalogHash: "new-hash",
+        matchedModel: event.modelRaw,
+        matchType: "exact",
+        calculatedAtMs: 400,
+      },
+    ]);
+    await expect(storage.queryUsage({ fromMs: 0, untilMs: 1000, basis: "estimated" })).resolves.toMatchObject({
+      totalAmountNanos: 456n,
+    });
+    await storage.upsertPricingCatalog({
+      catalogHash: "hash",
+      source: "test",
+      fetchedAtMs: 300,
+      status: "fresh",
+      payloadJson: JSON.stringify({ model: "price" }),
+    });
+    await expect(storage.getPricingCatalog("hash")).resolves.toMatchObject({ payloadJson: '{"model":"price"}' });
   });
 
   it("stores and loads durable file cursors", async () => {

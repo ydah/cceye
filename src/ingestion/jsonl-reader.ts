@@ -96,6 +96,11 @@ export const readJsonlIncrementally = async (
     }
   }
 
+  if (discarding) {
+    rejected.push({ startOffset: discardedStartOffset, endOffset: streamOffset, reason: "line_too_large" });
+    committedOffset = streamOffset;
+  }
+
   return {
     records,
     rejected,

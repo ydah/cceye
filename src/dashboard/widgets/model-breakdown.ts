@@ -6,12 +6,12 @@ export function updateModelBreakdown(
   items: ModelCost[],
   primaryColumn: "Model" | "Project" = "Model"
 ): void {
-  const total = items.reduce((sum, item) => sum + item.cost, 0);
+  const total = items.reduce((sum, item) => sum + (item.cost ?? 0), 0);
   const rows = [...items]
-    .sort((a, b) => b.cost - a.cost)
+    .sort((a, b) => (b.cost ?? -1) - (a.cost ?? -1))
     .map((item) => {
-      const percent = total > 0 ? (item.cost / total) * 100 : 0;
-      return [sanitizeLabel(item.model), `$${item.cost.toFixed(2)}`, `${percent.toFixed(0)}%`];
+      const percent = item.cost === null || total <= 0 ? 0 : (item.cost / total) * 100;
+      return [sanitizeLabel(item.model), item.cost === null ? "UNPRICED" : `$${item.cost.toFixed(2)}`, `${percent.toFixed(0)}%`];
     });
   table.setData({
     headers: [primaryColumn, "Cost", "%"],

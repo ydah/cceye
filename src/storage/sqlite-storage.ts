@@ -13,7 +13,9 @@ import type {
   IntegrityResult,
   IngestionHealth,
   NormalizedUsageEvent,
+  ParserError,
   PendingDelivery,
+  PricingCatalog,
   UsageBreakdown,
   UsageQuery,
   UsageStorage,
@@ -21,7 +23,8 @@ import type {
   UsageTransaction,
 } from "./storage.js";
 
-const schemaVersion = 1;
+const schemaVersion = 3;
+const deliveryLeaseDurationMs = 5 * 60 * 1000;
 
 export class SqliteUsageStorage implements UsageStorage {
   private readonly database: Database.Database;
@@ -35,18 +38,29 @@ export class SqliteUsageStorage implements UsageStorage {
     this.databasePath = databasePath;
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     fs.chmodSync(directory, 0o700);
-    this.database = new Database(databasePath);
-    this.database.defaultSafeIntegers(true);
-    this.database.pragma("journal_mode = WAL");
-    this.database.pragma("foreign_keys = ON");
-    this.database.pragma("busy_timeout = 5000");
-    fs.chmodSync(databasePath, 0o600);
-    for (const suffix of ["-wal", "-shm"]) {
-      const sidecar = `${databasePath}${suffix}`;
-      if (fs.existsSync(sidecar)) {
-        fs.chmodSync(sidecar, 0o600);
+    let database: Database.Database | null = null;
+    try {
+      database = new Database(databasePath);
+      database.defaultSafeIntegers(true);
+      database.pragma("journal_mode = WAL");
+      database.pragma("foreign_keys = ON");
+      database.pragma("busy_timeout = 5000");
+      fs.chmodSync(databasePath, 0o600);
+      for (const suffix of ["-wal", "-shm"]) {
+        const sidecar = `${databasePath}${suffix}`;
+        if (fs.existsSync(sidecar)) {
+          fs.chmodSync(sidecar, 0o600);
+        }
       }
+    } catch (error) {
+      database?.close();
+      const failedPath = preserveFailedDatabase(databasePath);
+      throw new Error(`database could not be opened; preserved failed database at ${failedPath}: ${String(error)}`);
     }
+    if (!database) {
+      throw new Error("database could not be opened");
+    }
+    this.database = database;
   }
 
   async migrate(): Promise<void> {
@@ -54,31 +68,42 @@ export class SqliteUsageStorage implements UsageStorage {
       this.database.exec(
         "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)"
       );
-      const applied = this.database
-        .prepare("SELECT version FROM schema_migrations WHERE version = ?")
-        .get(schemaVersion);
-      if (applied) {
-        return;
+      const latest = this.database
+        .prepare("SELECT MAX(version) AS version FROM schema_migrations")
+        .get() as Record<string, unknown>;
+      const latestVersion = latest.version === null ? 0 : toNumber(latest.version);
+      if (latestVersion > schemaVersion) {
+        throw new Error(`unsupported database schema version: ${latestVersion}`);
       }
       this.database.exec(ledgerSchema);
-      this.database
-        .prepare("INSERT INTO schema_migrations (version, applied_at_ms) VALUES (?, ?)")
-        .run(schemaVersion, Date.now());
+      if (latestVersion < 2) {
+        addColumnIfMissing(this.database, "delivery_outbox", "leased_at_ms", "INTEGER");
+        this.insertSchemaVersion(2);
+      }
+      if (latestVersion < 3) {
+        addColumnIfMissing(this.database, "billing_records", "revision_key", "TEXT");
+        addColumnIfMissing(this.database, "billing_records", "revision", "INTEGER NOT NULL DEFAULT 1");
+        addColumnIfMissing(this.database, "billing_records", "is_current", "INTEGER NOT NULL DEFAULT 1");
+        this.database.exec(
+          "UPDATE billing_records SET revision_key = provider || char(0) || period_start_ms || char(0) || period_end_ms || char(0) || currency || char(0) || dimensions_json WHERE revision_key IS NULL"
+        );
+        this.insertSchemaVersion(3);
+      }
+      this.database.exec("CREATE INDEX IF NOT EXISTS billing_records_revision_idx ON billing_records(revision_key, is_current)");
     });
     try {
       migrate();
     } catch (error) {
       this.database.close();
-      const failedPath = `${this.databasePath}.failed-${Date.now()}`;
-      fs.renameSync(this.databasePath, failedPath);
-      for (const suffix of ["-wal", "-shm"]) {
-        const sidecar = `${this.databasePath}${suffix}`;
-        if (fs.existsSync(sidecar)) {
-          fs.renameSync(sidecar, `${failedPath}${suffix}`);
-        }
-      }
+      const failedPath = preserveFailedDatabase(this.databasePath);
       throw new Error(`database migration failed; preserved failed database at ${failedPath}: ${String(error)}`);
     }
+  }
+
+  private insertSchemaVersion(version: number): void {
+    this.database
+      .prepare("INSERT INTO schema_migrations (version, applied_at_ms) VALUES (?, ?)")
+      .run(version, Date.now());
   }
 
   async transaction<T>(fn: (tx: UsageTransaction) => T): Promise<T> {
@@ -169,12 +194,18 @@ export class SqliteUsageStorage implements UsageStorage {
     events: NormalizedUsageEvent[];
     costs: EventCost[];
     cursors: FileCursor[];
+    parserErrors?: ParserError[];
+    pricingCatalog?: PricingCatalog | undefined;
   }): Promise<{ inserted: number; duplicates: number }> {
     const ingest = this.database.transaction(() => {
       const result = this.insertUsageEventsSync(batch.events);
       this.insertEventCostsSync(batch.costs);
       for (const cursor of batch.cursors) {
         this.upsertFileCursorSync(cursor);
+      }
+      this.insertParserErrorsSync(batch.parserErrors ?? []);
+      if (batch.pricingCatalog) {
+        this.upsertPricingCatalogSync(batch.pricingCatalog);
       }
       return result;
     });
@@ -214,7 +245,7 @@ export class SqliteUsageStorage implements UsageStorage {
     const [byModel, byProject, bySession] = await Promise.all([
       this.queryBreakdown("model_raw", query),
       this.queryBreakdown("project", query),
-      this.queryBreakdown("session", query),
+      this.queryBreakdown("session", query, true),
     ]);
     return { ...summaryBase, byModel, byProject, bySession };
   }
@@ -247,37 +278,56 @@ export class SqliteUsageStorage implements UsageStorage {
     return row ? mapAlert(row) : null;
   }
 
+  async hasDeliveredDelivery(alertId: string, transition: PendingDelivery["transition"]): Promise<boolean> {
+    const row = this.database
+      .prepare(
+        `SELECT 1
+           FROM delivery_outbox
+          WHERE alert_id = ? AND transition = ? AND status = 'delivered'
+          LIMIT 1`
+      )
+      .get(alertId, transition);
+    return row !== undefined;
+  }
+
   async enqueueDelivery(delivery: PendingDelivery): Promise<void> {
     this.database
       .prepare(
         `INSERT OR IGNORE INTO delivery_outbox
           (id, alert_id, channel, transition, status, attempts, next_attempt_at_ms, last_error,
-           idempotency_key, created_at_ms, delivered_at_ms)
+           idempotency_key, created_at_ms, delivered_at_ms, leased_at_ms)
          VALUES (@id, @alertId, @channel, @transition, @status, @attempts, @nextAttemptAtMs,
-                 @lastError, @idempotencyKey, @createdAtMs, @deliveredAtMs)`
+                 @lastError, @idempotencyKey, @createdAtMs, @deliveredAtMs, @leasedAtMs)`
       )
-      .run({ ...delivery });
+      .run({ ...delivery, leasedAtMs: delivery.leasedAtMs ?? null });
   }
 
   async claimDeliveries(nowMs: number, limit: number): Promise<PendingDelivery[]> {
     const claim = this.database.transaction(() => {
+      this.database
+        .prepare(
+          `UPDATE delivery_outbox
+              SET status = 'retrying', next_attempt_at_ms = ?, leased_at_ms = NULL
+            WHERE status = 'leased' AND leased_at_ms IS NOT NULL AND leased_at_ms <= ?`
+        )
+        .run(nowMs, nowMs - deliveryLeaseDurationMs);
       const rows = this.database
         .prepare(
           `SELECT id, alert_id, channel, transition, status, attempts, next_attempt_at_ms, last_error,
-                  idempotency_key, created_at_ms, delivered_at_ms
+                  idempotency_key, created_at_ms, delivered_at_ms, leased_at_ms
              FROM delivery_outbox
             WHERE status IN ('pending', 'retrying') AND next_attempt_at_ms <= ?
             ORDER BY next_attempt_at_ms ASC LIMIT ?`
         )
         .all(nowMs, limit) as Record<string, unknown>[];
       const update = this.database.prepare(
-        "UPDATE delivery_outbox SET status = 'leased' WHERE id = ? AND status IN ('pending', 'retrying')"
+        "UPDATE delivery_outbox SET status = 'leased', leased_at_ms = ? WHERE id = ? AND status IN ('pending', 'retrying')"
       );
       const claimed: PendingDelivery[] = [];
       for (const row of rows) {
-        const result = update.run(String(row.id));
+        const result = update.run(nowMs, String(row.id));
         if (Number(result.changes) === 1) {
-          claimed.push(mapDelivery({ ...row, status: "leased" }));
+          claimed.push(mapDelivery({ ...row, status: "leased", leased_at_ms: nowMs }));
         }
       }
       return claimed;
@@ -289,7 +339,7 @@ export class SqliteUsageStorage implements UsageStorage {
     const rows = this.database
       .prepare(
         `SELECT id, alert_id, channel, transition, status, attempts, next_attempt_at_ms, last_error,
-                idempotency_key, created_at_ms, delivered_at_ms
+                idempotency_key, created_at_ms, delivered_at_ms, leased_at_ms
            FROM delivery_outbox
           WHERE status IN ('pending', 'retrying') AND next_attempt_at_ms <= ?
           ORDER BY next_attempt_at_ms ASC LIMIT ?`
@@ -302,7 +352,7 @@ export class SqliteUsageStorage implements UsageStorage {
     const row = this.database
       .prepare(
         `SELECT id, alert_id, channel, transition, status, attempts, next_attempt_at_ms, last_error,
-                idempotency_key, created_at_ms, delivered_at_ms
+                idempotency_key, created_at_ms, delivered_at_ms, leased_at_ms
            FROM delivery_outbox WHERE id = ?`
       )
       .get(id) as Record<string, unknown> | undefined;
@@ -313,8 +363,8 @@ export class SqliteUsageStorage implements UsageStorage {
     const result = this.database
       .prepare(
         `UPDATE delivery_outbox
-            SET status = 'retrying', next_attempt_at_ms = ?, last_error = NULL, delivered_at_ms = NULL
-          WHERE id = ? AND status IN ('dead', 'retrying', 'pending')`
+            SET status = 'retrying', next_attempt_at_ms = ?, last_error = NULL, delivered_at_ms = NULL, leased_at_ms = NULL
+          WHERE id = ? AND status IN ('dead', 'retrying', 'pending', 'leased')`
       )
       .run(Date.now(), id);
     return Number(result.changes) === 1;
@@ -338,10 +388,11 @@ export class SqliteUsageStorage implements UsageStorage {
     this.database
       .prepare(
         `UPDATE delivery_outbox SET status = @status, attempts = @attempts,
-          next_attempt_at_ms = @nextAttemptAtMs, last_error = @lastError, delivered_at_ms = @deliveredAtMs
+          next_attempt_at_ms = @nextAttemptAtMs, last_error = @lastError, delivered_at_ms = @deliveredAtMs,
+          leased_at_ms = @leasedAtMs
          WHERE id = @id`
       )
-      .run({ ...delivery });
+      .run({ ...delivery, leasedAtMs: delivery.status === "leased" ? delivery.leasedAtMs ?? Date.now() : null });
   }
 
   async recordIngestionHealth(health: IngestionHealth): Promise<void> {
@@ -388,17 +439,86 @@ export class SqliteUsageStorage implements UsageStorage {
     };
   }
 
+  async listParserErrors(limit: number): Promise<ParserError[]> {
+    const rows = this.database
+      .prepare(
+        `SELECT p.offset, p.error_digest, p.reason, s.source_kind, s.canonical_path,
+                s.file_identity, s.generation
+           FROM parser_errors p
+           LEFT JOIN source_files s ON s.id = p.source_file_id
+          ORDER BY p.id DESC LIMIT ?`
+      )
+      .all(limit) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      source: {
+        sourceKind: String(row.source_kind ?? "unknown"),
+        canonicalPath: String(row.canonical_path ?? "unknown"),
+        fileIdentity: String(row.file_identity ?? "unknown"),
+      },
+      generation: toNumber(row.generation),
+      offset: toNumber(row.offset),
+      errorDigest: String(row.error_digest),
+      reason: String(row.reason),
+    }));
+  }
+
+  async upsertPricingCatalog(catalog: PricingCatalog): Promise<void> {
+    this.upsertPricingCatalogSync(catalog);
+  }
+
+  async getPricingCatalog(catalogHash: string): Promise<PricingCatalog | null> {
+    const row = this.database
+      .prepare("SELECT catalog_hash, source, fetched_at_ms, status, payload_json FROM pricing_catalogs WHERE catalog_hash = ?")
+      .get(catalogHash) as Record<string, unknown> | undefined;
+    if (!row) {
+      return null;
+    }
+    return {
+      catalogHash: String(row.catalog_hash),
+      source: String(row.source),
+      fetchedAtMs: toNumber(row.fetched_at_ms),
+      status: String(row.status),
+      payloadJson: String(row.payload_json),
+    };
+  }
+
   async upsertBillingRecord(record: BillingRecord): Promise<void> {
+    const revisionKey = record.revisionKey ?? createBillingRevisionKey(record);
+    const current = this.database
+      .prepare(
+        `SELECT record_id, revision, amount_nanos
+           FROM billing_records
+          WHERE revision_key = ? AND is_current = 1
+          ORDER BY revision DESC LIMIT 1`
+      )
+      .get(revisionKey) as Record<string, unknown> | undefined;
+    if (current && toNullableBigInt(current.amount_nanos) === record.amountNanos) {
+      this.database
+        .prepare("UPDATE billing_records SET fetched_at_ms = ? WHERE record_id = ?")
+        .run(record.fetchedAtMs, String(current.record_id));
+      return;
+    }
+    const revision = current ? toNumber(current.revision) + 1 : 1;
+    if (current) {
+      this.database
+        .prepare("UPDATE billing_records SET is_current = 0 WHERE record_id = ?")
+        .run(String(current.record_id));
+    }
     this.database
       .prepare(
         `INSERT INTO billing_records
-          (record_id, provider, period_start_ms, period_end_ms, amount_nanos, currency, dimensions_json, fetched_at_ms)
-         VALUES (@recordId, @provider, @periodStartMs, @periodEndMs, @amountNanos, @currency, @dimensionsJson, @fetchedAtMs)
+          (record_id, provider, period_start_ms, period_end_ms, amount_nanos, currency, dimensions_json,
+           fetched_at_ms, revision_key, revision, is_current)
+         VALUES (@recordId, @provider, @periodStartMs, @periodEndMs, @amountNanos, @currency, @dimensionsJson,
+                 @fetchedAtMs, @revisionKey, @revision, 1)
          ON CONFLICT(record_id) DO UPDATE SET
            amount_nanos = excluded.amount_nanos,
            currency = excluded.currency,
            dimensions_json = excluded.dimensions_json,
-           fetched_at_ms = excluded.fetched_at_ms`
+           fetched_at_ms = excluded.fetched_at_ms,
+           revision_key = excluded.revision_key,
+           revision = excluded.revision,
+           is_current = excluded.is_current`
       )
       .run({
         recordId: record.recordId,
@@ -409,15 +529,18 @@ export class SqliteUsageStorage implements UsageStorage {
         currency: record.currency,
         dimensionsJson: JSON.stringify(record.dimensions),
         fetchedAtMs: record.fetchedAtMs,
+        revisionKey,
+        revision,
       });
   }
 
   async queryBilling(fromMs: number, untilMs: number): Promise<BillingRecord[]> {
     const rows = this.database
       .prepare(
-        `SELECT record_id, provider, period_start_ms, period_end_ms, amount_nanos, currency, dimensions_json, fetched_at_ms
+        `SELECT record_id, provider, period_start_ms, period_end_ms, amount_nanos, currency, dimensions_json,
+                fetched_at_ms, revision_key, revision, is_current
            FROM billing_records
-          WHERE period_start_ms < ? AND period_end_ms > ?
+          WHERE period_start_ms < ? AND period_end_ms > ? AND is_current = 1
           ORDER BY period_start_ms ASC`
       )
       .all(untilMs, fromMs) as Record<string, unknown>[];
@@ -430,7 +553,39 @@ export class SqliteUsageStorage implements UsageStorage {
       currency: String(row.currency),
       dimensions: parseDimensions(row.dimensions_json),
       fetchedAtMs: toNumber(row.fetched_at_ms),
+      revisionKey: String(row.revision_key ?? row.record_id),
+      revision: toNumber(row.revision),
+      isCurrent: toNumber(row.is_current) === 1,
     }));
+  }
+
+  async resolveAlert(input: {
+    fingerprint: string;
+    currentAmountNanos: bigint;
+    resolvedAtMs: number;
+  }): Promise<boolean> {
+    const result = this.database
+      .prepare(
+        `UPDATE alert_instances
+            SET state = 'resolved', current_amount_nanos = ?, last_seen_at_ms = ?, resolved_at_ms = ?
+          WHERE fingerprint = ? AND state = 'firing'`
+      )
+      .run(input.currentAmountNanos, input.resolvedAtMs, input.resolvedAtMs, input.fingerprint);
+    return Number(result.changes) === 1;
+  }
+
+  async hasPendingRecovery(fingerprint: string): Promise<boolean> {
+    const row = this.database
+      .prepare(
+        `SELECT 1
+           FROM delivery_outbox d
+           JOIN alert_instances a ON a.id = d.alert_id
+          WHERE a.fingerprint = ? AND d.transition = 'recovery'
+            AND d.status IN ('pending', 'retrying', 'leased')
+          LIMIT 1`
+      )
+      .get(fingerprint);
+    return row !== undefined;
   }
 
   async checkIntegrity(): Promise<IntegrityResult> {
@@ -446,13 +601,6 @@ export class SqliteUsageStorage implements UsageStorage {
   private insertUsageEventsSync(events: NormalizedUsageEvent[]): { inserted: number; duplicates: number } {
     let inserted = 0;
     let duplicates = 0;
-    const sourceFile = this.database.prepare(
-      `INSERT INTO source_files
-        (source_kind, canonical_path, file_identity, generation, committed_offset, size, mtime_ms, status, last_seen_at_ms)
-       VALUES (?, ?, ?, ?, 0, 0, 0, 'active', ?)
-       ON CONFLICT(source_kind, file_identity, generation) DO UPDATE SET canonical_path = excluded.canonical_path
-       RETURNING id`
-    );
     const event = this.database.prepare(
       `INSERT OR IGNORE INTO usage_events
         (event_id, source_kind, source_file_id, occurred_at_ms, project, session, model_raw,
@@ -461,17 +609,11 @@ export class SqliteUsageStorage implements UsageStorage {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const value of events) {
-      const sourceFileRow = sourceFile.get(
-        value.source.sourceKind,
-        value.source.canonicalPath,
-        value.source.fileIdentity,
-        value.generation,
-        value.ingestedAtMs
-      ) as { id: bigint };
+      const sourceFileId = this.sourceFileIdSync(value.source, value.generation, value.ingestedAtMs);
       const result = event.run(
         value.eventId,
         value.source.sourceKind,
-        sourceFileRow.id,
+        sourceFileId,
         value.occurredAtMs,
         value.project,
         value.session,
@@ -495,17 +637,9 @@ export class SqliteUsageStorage implements UsageStorage {
 
   private insertEventCostsSync(costs: EventCost[]): void {
     const statement = this.database.prepare(
-      `INSERT INTO event_costs
+      `INSERT OR IGNORE INTO event_costs
         (event_id, basis, amount_nanos, currency, price_source, price_catalog_hash, matched_model, match_type, calculated_at_ms)
-       VALUES (@eventId, @basis, @amountNanos, @currency, @priceSource, @priceCatalogHash, @matchedModel, @matchType, @calculatedAtMs)
-       ON CONFLICT(event_id, basis) DO UPDATE SET
-         amount_nanos = excluded.amount_nanos,
-         currency = excluded.currency,
-         price_source = excluded.price_source,
-         price_catalog_hash = excluded.price_catalog_hash,
-         matched_model = excluded.matched_model,
-         match_type = excluded.match_type,
-         calculated_at_ms = excluded.calculated_at_ms`
+       VALUES (@eventId, @basis, @amountNanos, @currency, @priceSource, @priceCatalogHash, @matchedModel, @matchType, @calculatedAtMs)`
     );
     for (const cost of costs) {
       statement.run({
@@ -522,6 +656,44 @@ export class SqliteUsageStorage implements UsageStorage {
     }
   }
 
+  private insertParserErrorsSync(errors: ParserError[]): void {
+    const statement = this.database.prepare(
+      `INSERT INTO parser_errors (source_file_id, offset, error_digest, reason, created_at_ms)
+       VALUES (?, ?, ?, ?, ?)`
+    );
+    for (const error of errors) {
+      const sourceFileId = this.sourceFileIdSync(error.source, error.generation, Date.now());
+      statement.run(sourceFileId, error.offset, error.errorDigest, error.reason, Date.now());
+    }
+  }
+
+  private upsertPricingCatalogSync(catalog: PricingCatalog): void {
+    this.database
+      .prepare(
+        `INSERT INTO pricing_catalogs (catalog_hash, source, fetched_at_ms, status, payload_json)
+         VALUES (@catalogHash, @source, @fetchedAtMs, @status, @payloadJson)
+         ON CONFLICT(catalog_hash) DO UPDATE SET
+           source = excluded.source,
+           fetched_at_ms = excluded.fetched_at_ms,
+           status = excluded.status,
+           payload_json = excluded.payload_json`
+      )
+      .run({ ...catalog });
+  }
+
+  private sourceFileIdSync(source: FileIdentity, generation: number, lastSeenAtMs: number): bigint {
+    const row = this.database
+      .prepare(
+        `INSERT INTO source_files
+          (source_kind, canonical_path, file_identity, generation, committed_offset, size, mtime_ms, status, last_seen_at_ms)
+         VALUES (?, ?, ?, ?, 0, 0, 0, 'active', ?)
+         ON CONFLICT(source_kind, file_identity, generation) DO UPDATE SET canonical_path = excluded.canonical_path
+         RETURNING id`
+      )
+      .get(source.sourceKind, source.canonicalPath, source.fileIdentity, generation, lastSeenAtMs) as { id: bigint };
+    return row.id;
+  }
+
   private costExpression(basis: UsageQuery["basis"]): string {
     if (basis === "reported") {
       return "e.reported_cost_nanos";
@@ -532,18 +704,30 @@ export class SqliteUsageStorage implements UsageStorage {
     return "c.amount_nanos";
   }
 
-  private async queryBreakdown(column: "model_raw" | "project" | "session", query: UsageQuery): Promise<UsageBreakdown[]> {
+  private async queryBreakdown(
+    column: "model_raw" | "project" | "session",
+    query: UsageQuery,
+    includeTokenMetrics = false
+  ): Promise<UsageBreakdown[]> {
     const costExpression = this.costExpression(query.basis);
+    const keyExpression =
+      column === "session" ? "COALESCE(project, 'unknown') || '/' || COALESCE(session, 'unknown')" : `COALESCE(${column}, 'unknown')`;
     const rows = this.database
       .prepare(
-        `SELECT COALESCE(${column}, 'unknown') AS key,
+        `SELECT ${keyExpression} AS key,
                 SUM(${costExpression}) AS amount_nanos,
                 COUNT(*) AS events,
                 SUM(CASE WHEN ${costExpression} IS NULL THEN 1 ELSE 0 END) AS unpriced_events
+                ${includeTokenMetrics ? `,
+                SUM(input_tokens) AS input_tokens,
+                SUM(output_tokens) AS output_tokens,
+                SUM(cache_creation_tokens) AS cache_creation_tokens,
+                SUM(cache_read_tokens) AS cache_read_tokens,
+                SUM(CASE WHEN ${costExpression} IS NOT NULL THEN input_tokens ELSE 0 END) AS priced_input_tokens` : ""}
            FROM usage_events e
            LEFT JOIN event_costs c ON c.event_id = e.event_id AND c.basis = ?
           WHERE occurred_at_ms >= ? AND occurred_at_ms < ?
-          GROUP BY ${column}
+          GROUP BY ${keyExpression}
           ORDER BY amount_nanos DESC`
       )
       .all(query.basis, query.fromMs, query.untilMs) as Record<string, unknown>[];
@@ -552,6 +736,15 @@ export class SqliteUsageStorage implements UsageStorage {
       amountNanos: toNullableBigInt(row.amount_nanos),
       events: toNumber(row.events),
       unpricedEvents: toNumber(row.unpriced_events),
+      ...(includeTokenMetrics
+        ? {
+            inputTokens: toNumber(row.input_tokens),
+            outputTokens: toNumber(row.output_tokens),
+            cacheCreationTokens: toNumber(row.cache_creation_tokens),
+            cacheReadTokens: toNumber(row.cache_read_tokens),
+            pricedInputTokens: toNumber(row.priced_input_tokens),
+          }
+        : {}),
     }));
   }
 }
@@ -571,6 +764,46 @@ const toNullableBigInt = (value: unknown): bigint | null => {
   }
   return typeof value === "bigint" ? value : BigInt(Math.trunc(Number(value)));
 };
+
+const addColumnIfMissing = (database: Database.Database, table: string, column: string, definition: string): void => {
+  const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<Record<string, unknown>>;
+  if (columns.some((candidate) => String(candidate.name) === column)) {
+    return;
+  }
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+};
+
+const preserveFailedDatabase = (databasePath: string): string => {
+  const failedPath = `${databasePath}.failed-${Date.now()}`;
+  if (fs.existsSync(databasePath)) {
+    fs.renameSync(databasePath, failedPath);
+  }
+  for (const suffix of ["-wal", "-shm"]) {
+    const sidecar = `${databasePath}${suffix}`;
+    if (fs.existsSync(sidecar)) {
+      fs.renameSync(sidecar, `${failedPath}${suffix}`);
+    }
+  }
+  return failedPath;
+};
+
+const createBillingRevisionKey = (record: BillingRecord): string =>
+  `${record.provider}\0${record.periodStartMs}\0${record.periodEndMs}\0${record.currency}\0${JSON.stringify(record.dimensions)}`;
+
+const mapDelivery = (row: Record<string, unknown>): PendingDelivery => ({
+  id: String(row.id),
+  alertId: String(row.alert_id),
+  channel: String(row.channel),
+  transition: String(row.transition) as PendingDelivery["transition"],
+  status: String(row.status) as PendingDelivery["status"],
+  attempts: toNumber(row.attempts),
+  nextAttemptAtMs: toNumber(row.next_attempt_at_ms),
+  lastError: row.last_error === null ? null : String(row.last_error),
+  idempotencyKey: String(row.idempotency_key),
+  createdAtMs: toNumber(row.created_at_ms),
+  deliveredAtMs: row.delivered_at_ms === null ? null : toNumber(row.delivered_at_ms),
+  leasedAtMs: row.leased_at_ms === null || row.leased_at_ms === undefined ? null : toNumber(row.leased_at_ms),
+});
 
 const mapFileCursor = (row: Record<string, unknown>): FileCursor => ({
   sourceKind: String(row.source_kind),
@@ -596,20 +829,6 @@ const mapAlert = (row: Record<string, unknown>): AlertInstance => ({
   firstSeenAtMs: toNumber(row.first_seen_at_ms),
   lastSeenAtMs: toNumber(row.last_seen_at_ms),
   resolvedAtMs: row.resolved_at_ms === null ? null : toNumber(row.resolved_at_ms),
-});
-
-const mapDelivery = (row: Record<string, unknown>): PendingDelivery => ({
-  id: String(row.id),
-  alertId: String(row.alert_id),
-  channel: String(row.channel),
-  transition: String(row.transition) as PendingDelivery["transition"],
-  status: String(row.status) as PendingDelivery["status"],
-  attempts: toNumber(row.attempts),
-  nextAttemptAtMs: toNumber(row.next_attempt_at_ms),
-  lastError: row.last_error === null ? null : String(row.last_error),
-  idempotencyKey: String(row.idempotency_key),
-  createdAtMs: toNumber(row.created_at_ms),
-  deliveredAtMs: row.delivered_at_ms === null ? null : toNumber(row.delivered_at_ms),
 });
 
 const parseDimensions = (value: unknown): Record<string, string> => {

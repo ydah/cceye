@@ -42,13 +42,20 @@ import { SqliteUsageStorage } from "./storage/sqlite-storage.js";
 import { backupLegacyFilesBeforeFirstDatabaseUse } from "./storage/legacy-migration.js";
 import type { PendingDelivery, UsageStorage, UsageSummary } from "./storage/storage.js";
 import { hourlyTrend, nextPoll, toModelBreakdown, toProjectBreakdown } from "./polling-metrics.js";
-import { buildReportRows, buildReportRowsFromStorage, printReportRows, type ReportCommand, type ReportOptions } from "./reporting.js";
+import {
+  buildReportRowsFromStorage,
+  buildSessionReportRowsFromStorage,
+  printReportRows,
+  type ReportCommand,
+  type ReportOptions,
+} from "./reporting.js";
 import { reconcileUsage } from "./billing/reconciliation.js";
 import { syncAnthropicBilling } from "./billing/billing-sync.js";
 import { formatMoneyNanos } from "./money.js";
 import { runDoctor } from "./diagnostics/doctor.js";
 import { drainDeliveryOutbox } from "./notifiers/outbox-worker.js";
 import { backupDatabase, rebuildDatabase } from "./storage/database-management.js";
+import { acquireDatabaseLock } from "./storage/database-lock.js";
 
 export { collectUsageEntries, hourlyTrend, nextPoll, toModelBreakdown, toProjectBreakdown };
 
@@ -305,16 +312,22 @@ export async function startDaemon(
   logger.silent = options.dashboard || !options.debug;
   const router = new NotificationRouter(config, { suppressConsole: options.dashboard });
   const pricing = await loadPricing({ aliases: config.pricing.aliases });
-  backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
-  const releaseLock = acquireDaemonLock(config.storage.database_path);
-  const storage = new SqliteUsageStorage(config.storage.database_path);
+  const releaseLock = acquireDatabaseLock(config.storage.database_path, "daemon");
+  let storage: SqliteUsageStorage | null = null;
   try {
+    backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
+    storage = new SqliteUsageStorage(config.storage.database_path);
     await storage.migrate();
   } catch (error) {
+    await (storage as SqliteUsageStorage | undefined)?.close();
     releaseLock();
-    await storage.close();
     throw error;
   }
+  if (!storage) {
+    releaseLock();
+    throw new Error("database could not be opened");
+  }
+  const daemonStorage = storage;
   let dashboardRef: Dashboard | undefined;
   let pollInFlight = false;
   const runPoll = async (): Promise<void> => {
@@ -324,7 +337,7 @@ export async function startDaemon(
     }
     pollInFlight = true;
     try {
-      await pollOnce(config, pricing, router, logger, options.dashboard, dashboardRef, true, storage);
+      await pollOnce(config, pricing, router, logger, options.dashboard, dashboardRef, true, daemonStorage);
     } finally {
       pollInFlight = false;
     }
@@ -351,77 +364,58 @@ export async function startDaemon(
       dashboardRefreshTimer = null;
     }
     dashboardRef?.destroy();
-    void storage.close();
+    void daemonStorage.close();
     releaseLock();
     process.off("SIGINT", handleSigint);
     process.off("SIGTERM", handleSigterm);
     shutdown(logger);
   };
 
-  if (options.dashboard) {
-    dashboardRef = new Dashboard();
-    dashboardRef.onQuit(shutdownDaemon);
-    dashboardRef.onRefresh(() => {
-      const data = loadData();
-      const lastUpdated = data.lastUpdated ? new Date(data.lastUpdated) : null;
-      dashboardRef?.update(data, config, lastUpdated, nextPoll(config.polling_interval_milliseconds), "Fetching...");
-      runPoll().catch((error) => logger.error(String(error)));
-    });
-    dashboardRef.onWindowChange(() => {
-      const data = loadData();
-      const lastUpdated = data.lastUpdated ? new Date(data.lastUpdated) : null;
-      dashboardRef?.update(data, config, lastUpdated, nextPoll(config.polling_interval_milliseconds));
-    });
-  }
-
-  scheduler.start();
-
-  if (dashboardRef) {
-    const data = loadData();
-    const lastUpdated = data.lastUpdated ? new Date(data.lastUpdated) : null;
-    dashboardRef.update(data, config, lastUpdated, nextPoll(config.polling_interval_milliseconds));
-    dashboardRefreshTimer = setInterval(() => {
-      const current = loadData();
-      const currentUpdated = current.lastUpdated ? new Date(current.lastUpdated) : null;
-      dashboardRef?.update(
-        current,
-        config,
-        currentUpdated,
-        nextPoll(config.polling_interval_milliseconds)
-      );
-    }, config.dashboard.refresh_interval_seconds * 1000);
-  }
-
-  process.on("SIGINT", handleSigint);
-  process.on("SIGTERM", handleSigterm);
-}
-/* v8 ignore stop */
-
-function acquireDaemonLock(databasePath: string): () => void {
-  const lockPath = `${databasePath}.lock`;
-  let descriptor: number;
   try {
-    descriptor = fs.openSync(lockPath, "wx", 0o600);
-    fs.writeFileSync(descriptor, `${process.pid}\n`, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error(`another cceye daemon is already using ${databasePath}`);
+    if (options.dashboard) {
+      dashboardRef = new Dashboard();
+      dashboardRef.onQuit(shutdownDaemon);
+      dashboardRef.onRefresh(() => {
+        const data = loadData();
+        const lastUpdated = data.lastUpdated ? new Date(data.lastUpdated) : null;
+        dashboardRef?.update(data, config, lastUpdated, nextPoll(config.polling_interval_milliseconds), "Fetching...");
+        runPoll().catch((error) => logger.error(String(error)));
+      });
+      dashboardRef.onWindowChange(() => {
+        const data = loadData();
+        const lastUpdated = data.lastUpdated ? new Date(data.lastUpdated) : null;
+        dashboardRef?.update(data, config, lastUpdated, nextPoll(config.polling_interval_milliseconds));
+      });
     }
+
+    scheduler.start();
+
+    if (dashboardRef) {
+      const data = loadData();
+      const lastUpdated = data.lastUpdated ? new Date(data.lastUpdated) : null;
+      dashboardRef.update(data, config, lastUpdated, nextPoll(config.polling_interval_milliseconds));
+      dashboardRefreshTimer = setInterval(() => {
+        const current = loadData();
+        const currentUpdated = current.lastUpdated ? new Date(current.lastUpdated) : null;
+        dashboardRef?.update(
+          current,
+          config,
+          currentUpdated,
+          nextPoll(config.polling_interval_milliseconds)
+        );
+      }, config.dashboard.refresh_interval_seconds * 1000);
+    }
+
+    process.on("SIGINT", handleSigint);
+    process.on("SIGTERM", handleSigterm);
+  } catch (error) {
+    dashboardRef?.destroy();
+    await daemonStorage.close();
+    releaseLock();
     throw error;
   }
-  return () => {
-    try {
-      fs.closeSync(descriptor);
-    } catch {
-      // The descriptor may already be closed during shutdown.
-    }
-    try {
-      fs.unlinkSync(lockPath);
-    } catch {
-      // A missing lock is already released.
-    }
-  };
 }
+/* v8 ignore stop */
 
 export async function pollOnce(
   config: Config,
@@ -434,14 +428,16 @@ export async function pollOnce(
   storage?: UsageStorage
 ): Promise<void> {
   const ledger = storage ?? new SqliteUsageStorage(config.storage.database_path);
-  if (!storage) {
-    await ledger.migrate();
-  }
-  const state = loadState();
-  resetWindowIfNeeded(state, config.timezone);
+  try {
+    if (!storage) {
+      await ledger.migrate();
+    }
+    const state = loadState();
+    resetWindowIfNeeded(state, config.timezone);
 
   const collection = await collectUsageIncrementally(config, ledger, pricing, logger);
-  await drainDeliveryOutbox(ledger, router, logger, { maxRetries: config.alerts.max_retries });
+  const drained = await drainDeliveryOutbox(ledger, router, logger, { maxRetries: config.alerts.max_retries });
+  await applyDeliveredOutboxState(state, ledger, drained.deliveredDeliveries);
   const entries = collection.entries;
   const basis = config.cost_mode === "display" ? "reported" : config.cost_mode === "calculate" ? "estimated" : "hybrid";
   const dailySummary = await ledger.queryUsage({ ...periodRange("daily", config.timezone), basis });
@@ -472,6 +468,29 @@ export async function pollOnce(
       continue;
     }
 
+    const alertFingerprint = `${result.window}:${level}:${periodRange(result.window, config.timezone).fromMs}`;
+    const existingAlert = await ledger.getAlert(alertFingerprint);
+    if (existingAlert?.state === "firing") {
+      await ledger.createAlert({
+        ...existingAlert,
+        currentAmountNanos: dollarsToNanos(result.currentCost),
+        lastSeenAtMs: Date.now(),
+      });
+      if (
+        state.activeAlerts[result.window] !== level &&
+        (await ledger.hasDeliveredDelivery(alertFingerprint, "firing"))
+      ) {
+        recordNotification(state, {
+          timestamp: new Date(existingAlert.lastSeenAtMs).toISOString(),
+          window: result.window,
+          level,
+          cost: result.currentCost,
+          threshold,
+        });
+      }
+      continue;
+    }
+
     const alert = {
       level,
       window: result.window,
@@ -480,7 +499,7 @@ export async function pollOnce(
       timestamp: new Date(),
     };
 
-    const alertId = randomUUID();
+    const alertId = alertFingerprint;
     const pendingDeliveries: PendingDelivery[] = router.channelNames().map((channel) => ({
       id: randomUUID(),
       alertId,
@@ -497,7 +516,7 @@ export async function pollOnce(
     await ledger.transaction((tx) => {
       void tx.createAlert({
         id: alertId,
-        fingerprint: `${result.window}:${level}:${periodRange(result.window, config.timezone).fromMs}`,
+        fingerprint: alertFingerprint,
         windowKey: result.window,
         windowStartMs: periodRange(result.window, config.timezone).fromMs,
         level,
@@ -570,8 +589,35 @@ export async function pollOnce(
       }
       const level = state.activeAlerts[window];
       const threshold = config.thresholds[window][level];
+      const currentCost = costsByWindow[window];
+      if (currentCost === null) {
+        continue;
+      }
       const timestamp = new Date();
-      const alertId = randomUUID();
+      const periodStartMs = periodRange(window, config.timezone).fromMs;
+      const recoveryFingerprint = `${window}:recovery:${periodStartMs}`;
+      const existingRecovery = await ledger.getAlert(recoveryFingerprint);
+      if (existingRecovery) {
+        if (
+          state.activeAlerts[window] !== null &&
+          (await ledger.hasDeliveredDelivery(recoveryFingerprint, "recovery"))
+        ) {
+          recordRecoveryNotification(state, {
+            timestamp: new Date(existingRecovery.lastSeenAtMs).toISOString(),
+            window,
+            level,
+            cost: currentCost,
+            threshold,
+          });
+        }
+        continue;
+      }
+      const alertId = recoveryFingerprint;
+      await ledger.resolveAlert({
+        fingerprint: `${window}:${level}:${periodStartMs}`,
+        currentAmountNanos: dollarsToNanos(currentCost),
+        resolvedAtMs: timestamp.getTime(),
+      });
       const pendingDeliveries: PendingDelivery[] = router.channelNames().map((channel) => ({
         id: randomUUID(),
         alertId,
@@ -588,12 +634,12 @@ export async function pollOnce(
       await ledger.transaction((tx) => {
         void tx.createAlert({
           id: alertId,
-          fingerprint: `${window}:recovery:${periodRange(window, config.timezone).fromMs}`,
+          fingerprint: recoveryFingerprint,
           windowKey: window,
           windowStartMs: periodRange(window, config.timezone).fromMs,
           level,
           state: "resolved",
-          currentAmountNanos: dollarsToNanos(costsByWindow[window]),
+          currentAmountNanos: dollarsToNanos(currentCost),
           thresholdAmountNanos: dollarsToNanos(threshold),
           firstSeenAtMs: timestamp.getTime(),
           lastSeenAtMs: timestamp.getTime(),
@@ -608,7 +654,7 @@ export async function pollOnce(
           router.sendChannel(delivery.channel, {
             level,
             window,
-            currentCost: costsByWindow[window],
+            currentCost,
             threshold,
             timestamp,
             transition: "recovery",
@@ -633,19 +679,21 @@ export async function pollOnce(
           deliveredAtMs: succeeded ? Date.now() : null,
         });
       }
-      recordRecoveryNotification(state, {
-        timestamp: timestamp.toISOString(),
-        window,
-        level,
-        cost: costsByWindow[window],
-        threshold,
-      });
+      if (channels.length > 0) {
+        recordRecoveryNotification(state, {
+          timestamp: timestamp.toISOString(),
+          window,
+          level,
+          cost: currentCost,
+          threshold,
+        });
+      }
       const data = loadData();
       addNotificationHistory(data, {
         timestamp: timestamp.toISOString(),
         level,
         window,
-        currentCost: costsByWindow[window],
+        currentCost,
         threshold,
         channels,
         deliveryResults,
@@ -693,16 +741,46 @@ export async function pollOnce(
     dashboard?.update(data, config, lastUpdated, nextPoll(config.polling_interval_milliseconds));
   }
 
-  logger.info("polling cycle completed");
-  if (!storage) {
-    await ledger.close();
+    logger.info("polling cycle completed");
+  } finally {
+    if (!storage) {
+      await ledger.close();
+    }
+  }
+}
+
+async function applyDeliveredOutboxState(
+  state: ReturnType<typeof loadState>,
+  storage: UsageStorage,
+  deliveries: PendingDelivery[]
+): Promise<void> {
+  for (const delivery of deliveries) {
+    const alert = await storage.getAlert(delivery.alertId);
+    if (!alert) {
+      continue;
+    }
+    const window = alert.windowKey as "daily" | "weekly" | "monthly";
+    const entry = {
+      timestamp: new Date(alert.lastSeenAtMs).toISOString(),
+      window,
+      level: alert.level,
+      cost: Number(alert.currentAmountNanos) / 1_000_000_000,
+      threshold: Number(alert.thresholdAmountNanos) / 1_000_000_000,
+    };
+    if (delivery.transition === "firing" && state.activeAlerts[window] !== alert.level) {
+      recordNotification(state, entry);
+      continue;
+    }
+    if (delivery.transition === "recovery" && state.activeAlerts[window] !== null) {
+      recordRecoveryNotification(state, entry);
+    }
   }
 }
 
 function toAggregatedCost(summary: UsageSummary): {
-  total: number;
-  byModel: Record<string, number>;
-  byProject: Record<string, number>;
+  total: number | null;
+  byModel: Record<string, number | null>;
+  byProject: Record<string, number | null>;
   tokenBreakdown: { input: number; output: number; cacheCreation: number; cacheRead: number };
 } {
   return {
@@ -718,7 +796,7 @@ function toAggregatedCost(summary: UsageSummary): {
   };
 }
 
-const nanosToNumber = (amount: bigint | null): number => (amount === null ? 0 : Number(amount) / 1_000_000_000);
+const nanosToNumber = (amount: bigint | null): number | null => (amount === null ? null : Number(amount) / 1_000_000_000);
 
 const dollarsToNanos = (amount: number): bigint => BigInt(Math.round(amount * 1_000_000_000));
 
@@ -732,11 +810,17 @@ export async function showStatus(cliArgs: string[] = process.argv.slice(2)): Pro
   const logger = createLogger(config);
   logger.silent = true;
   const pricing = await loadPricing({ aliases: config.pricing.aliases });
-  backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
-  const storage = new SqliteUsageStorage(config.storage.database_path);
-  await storage.migrate();
-  await pollOnce(config, pricing, new NotificationRouter(config), logger, false, undefined, false, storage);
-  await storage.close();
+  const releaseLock = acquireDatabaseLock(config.storage.database_path, "status command");
+  let storage: SqliteUsageStorage | null = null;
+  try {
+    backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
+    storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
+    await pollOnce(config, pricing, new NotificationRouter(config), logger, false, undefined, false, storage);
+  } finally {
+    await storage?.close();
+    releaseLock();
+  }
   const data = loadData();
   const output = {
     daily: data.currentCosts.daily,
@@ -753,12 +837,14 @@ export async function showStatus(cliArgs: string[] = process.argv.slice(2)): Pro
     return;
   }
   console.log(
-    `Daily: $${output.daily.toFixed(2)}, Weekly: $${output.weekly.toFixed(2)}, Monthly: $${output.monthly.toFixed(2)}`
+    `Daily: ${formatDisplayCost(output.daily)}, Weekly: ${formatDisplayCost(output.weekly)}, Monthly: ${formatDisplayCost(output.monthly)}`
   );
   console.log(
     `Pricing coverage: ${((output.coverage.monthly?.eventCoverageRatio ?? 1) * 100).toFixed(1)}% (${output.pricingStatus})`
   );
 }
+
+const formatDisplayCost = (amount: number | null): string => (amount === null ? "UNPRICED" : `$${amount.toFixed(2)}`);
 
 export async function showReport(command: ReportCommand, cliArgs: string[] = process.argv.slice(2)): Promise<void> {
   const since = parseDateFilter(readOptionValue(cliArgs, "--since"), "--since");
@@ -786,7 +872,9 @@ export async function showReport(command: ReportCommand, cliArgs: string[] = pro
     breakdownDimension:
       breakdownValue === "project" || breakdownValue === "session" || breakdownValue === "model"
         ? breakdownValue
-        : "model",
+        : command === "session"
+          ? "session"
+          : "model",
     showCoverage: hasFlag(cliArgs, ["--show-coverage"]),
     ...(top !== undefined ? { top } : {}),
     other: hasFlag(cliArgs, ["--other"]),
@@ -799,23 +887,36 @@ export async function showReport(command: ReportCommand, cliArgs: string[] = pro
   }
 
   if (command !== "session") {
-    backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
-    const storage = new SqliteUsageStorage(config.storage.database_path);
-    await storage.migrate();
+    const releaseLock = acquireDatabaseLock(config.storage.database_path, "report command");
+    let storage: SqliteUsageStorage | null = null;
     try {
+      backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
+      storage = new SqliteUsageStorage(config.storage.database_path);
+      await storage.migrate();
       await collectUsageIncrementally(config, storage, pricing, logger);
       const basis = config.cost_mode === "display" ? "reported" : config.cost_mode === "calculate" ? "estimated" : "hybrid";
       const rows = await buildReportRowsFromStorage(storage, command, reportOptions, basis);
       printReportRows(rows, reportOptions);
     } finally {
-      await storage.close();
+      await storage?.close();
+      releaseLock();
     }
     return;
   }
-  const state = loadState();
-  const entries = await collectUsageEntries(config, state, pricing, logger);
-  const rows = buildReportRows(entries, command, reportOptions);
-  printReportRows(rows, reportOptions);
+  const releaseLock = acquireDatabaseLock(config.storage.database_path, "session report command");
+  let storage: SqliteUsageStorage | null = null;
+  try {
+    backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
+    storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
+    await collectUsageIncrementally(config, storage, pricing, logger);
+    const basis = config.cost_mode === "display" ? "reported" : config.cost_mode === "calculate" ? "estimated" : "hybrid";
+    const rows = await buildSessionReportRowsFromStorage(storage, reportOptions, basis);
+    printReportRows(rows, reportOptions);
+  } finally {
+    await storage?.close();
+    releaseLock();
+  }
 }
 
 export async function showPriceExplanation(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
@@ -862,10 +963,12 @@ export async function showBilling(cliArgs: string[] = process.argv.slice(2)): Pr
   }
   const config = loadConfigFromArgs(cliArgs);
   const range = dateRangeFromArgs(cliArgs);
-  backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
-  const storage = new SqliteUsageStorage(config.storage.database_path);
-  await storage.migrate();
+  const releaseLock = acquireDatabaseLock(config.storage.database_path, "billing command");
+  let storage: SqliteUsageStorage | null = null;
   try {
+    backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
+    storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
     if (subcommand === "sync") {
       const result = await syncAnthropicBilling(
         config.billing.anthropic,
@@ -888,17 +991,20 @@ export async function showBilling(cliArgs: string[] = process.argv.slice(2)): Pr
       `Billing records: ${records.length}, total: $${formatMoneyNanos(amount)}`
     );
   } finally {
-    await storage.close();
+    await storage?.close();
+    releaseLock();
   }
 }
 
 export async function showReconciliation(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
   const config = loadConfigFromArgs(cliArgs);
   const range = dateRangeFromArgs(cliArgs);
-  backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
-  const storage = new SqliteUsageStorage(config.storage.database_path);
-  await storage.migrate();
+  const releaseLock = acquireDatabaseLock(config.storage.database_path, "reconciliation command");
+  let storage: SqliteUsageStorage | null = null;
   try {
+    backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
+    storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
     const result = await reconcileUsage(storage, range.fromMs, range.untilMs);
     const output = {
       period: { from: new Date(result.fromMs).toISOString(), until: new Date(result.untilMs).toISOString() },
@@ -922,27 +1028,34 @@ export async function showReconciliation(cliArgs: string[] = process.argv.slice(
     console.log(`Estimated coverage: ${(result.estimatedCoverage.eventCoverageRatio * 100).toFixed(1)}%`);
     console.log(`Unpriced local events: ${result.unpricedEvents}`);
   } finally {
-    await storage.close();
+    await storage?.close();
+    releaseLock();
   }
 }
 
 export async function showDoctor(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
   const config = loadConfigFromArgs(cliArgs);
   const pricing = await loadPricing({ offline: true, aliases: config.pricing.aliases });
-  backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
-  const storage = new SqliteUsageStorage(config.storage.database_path);
-  await storage.migrate();
+  const releaseLock = acquireDatabaseLock(config.storage.database_path, "doctor command");
+  let storage: SqliteUsageStorage | null = null;
   try {
+    backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
+    storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
     const report = await runDoctor(config, storage, pricing);
     if (hasFlag(cliArgs, ["--json"])) {
       console.log(JSON.stringify(report));
-      return;
+    } else {
+      for (const check of report.checks) {
+        console.log(`[${check.status.toUpperCase()}] ${check.name}: ${check.message}`);
+      }
     }
-    for (const check of report.checks) {
-      console.log(`[${check.status.toUpperCase()}] ${check.name}: ${check.message}`);
+    if (!report.ok) {
+      throw new Error("doctor found database or delivery errors");
     }
   } finally {
-    await storage.close();
+    await storage?.close();
+    releaseLock();
   }
 }
 
@@ -967,10 +1080,12 @@ export async function manageAlerts(cliArgs: string[] = process.argv.slice(2)): P
     throw new Error("usage: cceye alerts retry DELIVERY_ID");
   }
   const config = loadConfigFromArgs(cliArgs);
-  backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
-  const storage = new SqliteUsageStorage(config.storage.database_path);
-  await storage.migrate();
+  const releaseLock = acquireDatabaseLock(config.storage.database_path, "alert retry command");
+  let storage: SqliteUsageStorage | null = null;
   try {
+    backupLegacyFilesBeforeFirstDatabaseUse(config.storage.database_path);
+    storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
     const retried = await storage.retryDelivery(deliveryId);
     printJsonOrText(
       cliArgs,
@@ -978,7 +1093,8 @@ export async function manageAlerts(cliArgs: string[] = process.argv.slice(2)): P
       retried ? `Delivery ${deliveryId} queued for retry.` : `Delivery ${deliveryId} was not found or is already delivered.`
     );
   } finally {
-    await storage.close();
+    await storage?.close();
+    releaseLock();
   }
 }
 
@@ -988,7 +1104,7 @@ export async function notifyTest(cliArgs: string[] = process.argv.slice(2)): Pro
     throw new Error("usage: cceye notify test [--channel CHANNEL]");
   }
   const config = loadConfigFromArgs(cliArgs);
-  const router = new NotificationRouter(config);
+  const router = new NotificationRouter(config, { suppressConsole: hasFlag(cliArgs, ["--json"]) });
   const channel = readOptionValue(cliArgs, "--channel");
   if (channel && !router.channelNames().includes(channel)) {
     throw new Error(`notification channel is not configured: ${channel}`);
@@ -1007,8 +1123,12 @@ export async function notifyTest(cliArgs: string[] = process.argv.slice(2)): Pro
     { test: true, results },
     results.length === 0
       ? "No notification channels are enabled."
-      : `Test notification: ${results.map((result) => `${result.channel}=${result.status}`).join(", ")}`
+    : `Test notification: ${results.map((result) => `${result.channel}=${result.status}`).join(", ")}`
   );
+  const failures = results.filter((result) => result.status === "failed");
+  if (failures.length > 0) {
+    throw new Error(`notification test failed: ${failures.map((failure) => failure.channel).join(", ")}`);
+  }
 }
 
 export async function manageDatabase(cliArgs: string[] = process.argv.slice(2)): Promise<void> {
@@ -1022,14 +1142,20 @@ export async function manageDatabase(cliArgs: string[] = process.argv.slice(2)):
   if (subcommand === "check") {
     if (!fs.existsSync(databasePath)) {
       printJsonOrText(cliArgs, { ok: false, message: "database not found" }, `Database not found: ${databasePath}`);
-      return;
+      throw new Error(`database not found: ${databasePath}`);
     }
-    const storage = new SqliteUsageStorage(databasePath);
+    const releaseLock = acquireDatabaseLock(databasePath, "database check");
+    let storage: SqliteUsageStorage | null = null;
     try {
+      storage = new SqliteUsageStorage(databasePath);
       const result = await storage.checkIntegrity();
       printJsonOrText(cliArgs, result as unknown as Record<string, unknown>, result.ok ? "Database integrity: ok" : `Database integrity: ${result.message}`);
+      if (!result.ok) {
+        throw new Error(`database integrity check failed: ${result.message}`);
+      }
     } finally {
-      await storage.close();
+      await storage?.close();
+      releaseLock();
     }
     return;
   }
@@ -1272,6 +1398,9 @@ function errorExitCode(error: unknown): number {
   }
   if (message.includes("database") || message.includes("state")) {
     return 5;
+  }
+  if (message.includes("notification")) {
+    return 6;
   }
   if (message.includes("unpriced") || message.includes("incomplete")) {
     return 4;

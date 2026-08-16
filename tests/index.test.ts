@@ -190,6 +190,27 @@ describe("index.ts", () => {
     expect(payload).toContain('"totalCost"');
   });
 
+  it("builds the session report from the ledger", async () => {
+    const index = await import("../src/index.ts");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await index.main([
+      "session",
+      "--json",
+      "--since",
+      "20260101",
+      "--until",
+      "20261231",
+      "--offline",
+      "--config",
+      configPath,
+    ]);
+
+    const payload = String(logSpy.mock.calls.at(-1)?.[0] ?? "");
+    expect(payload).toContain('"key": "project-a/session"');
+    expect(payload).toContain('"amountNanos"');
+  });
+
   it("accepts --config before command", async () => {
     const index = await import("../src/index.ts");
     await expect(index.main(["--config", configPath, "status"])).resolves.toBeUndefined();
@@ -286,6 +307,34 @@ describe("index.ts", () => {
     await storage.close();
   });
 
+  it("does not create duplicate firing deliveries after all channels fail", async () => {
+    const index = await import("../src/index.ts");
+    const { loadConfig } = await import("../src/config.ts");
+    const { loadPricing } = await import("../src/pricing.ts");
+    const { createLogger } = await import("../src/logger.ts");
+    const { SqliteUsageStorage } = await import("../src/storage/sqlite-storage.ts");
+
+    const config = loadConfig(configPath);
+    config.thresholds.daily.warning = 0.001;
+    config.thresholds.daily.critical = 1;
+    const pricing = await loadPricing({ offline: true });
+    const logger = createLogger(config);
+    logger.silent = true;
+    const router = {
+      channelNames: vi.fn(() => ["failed-channel"]),
+      sendChannel: vi.fn(async (channel: string) => ({ channel, status: "failed" as const, error: "offline" })),
+    };
+    const storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
+
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+
+    expect(router.sendChannel).toHaveBeenCalledTimes(1);
+    expect((await storage.getDeliveryCounts()).retrying).toBe(1);
+    await storage.close();
+  });
+
   it("sends a recovery notification after a threshold clears", async () => {
     const index = await import("../src/index.ts");
     const { loadConfig } = await import("../src/config.ts");
@@ -315,6 +364,57 @@ describe("index.ts", () => {
     expect(router.sendChannel).toHaveBeenCalledTimes(2);
     expect((await storage.getDeliveryCounts()).delivered).toBe(2);
     expect(JSON.parse(fs.readFileSync(path.join(tempHome, ".config", "cceye", "state.json"), "utf8")).activeAlerts.daily).toBeNull();
+    await storage.close();
+  });
+
+  it("keeps recovery active until a failed delivery is retried successfully", async () => {
+    const index = await import("../src/index.ts");
+    const { loadConfig } = await import("../src/config.ts");
+    const { loadPricing } = await import("../src/pricing.ts");
+    const { createLogger } = await import("../src/logger.ts");
+    const { SqliteUsageStorage } = await import("../src/storage/sqlite-storage.ts");
+    const { loadState } = await import("../src/state-store.ts");
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-16T12:00:00.000Z"));
+    const config = loadConfig(configPath);
+    config.thresholds.daily.warning = 0.001;
+    config.thresholds.daily.critical = 1;
+    config.alerts.notify_on_recovery = true;
+    const pricing = await loadPricing({ offline: true });
+    const logger = createLogger(config);
+    logger.silent = true;
+    let calls = 0;
+    const router = {
+      channelNames: vi.fn(() => ["test"]),
+      sendChannel: vi.fn(async (channel: string) => {
+        calls += 1;
+        return calls === 2
+          ? { channel, status: "failed" as const, error: "recovery unavailable" }
+          : { channel, status: "success" as const };
+      }),
+    };
+    const storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
+
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+    config.thresholds.daily.warning = 5;
+    config.thresholds.daily.critical = 10;
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+    expect(loadState().activeAlerts.daily).toBe("warning");
+
+    vi.advanceTimersByTime(10_000);
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+    expect(calls).toBe(3);
+    expect(loadState().activeAlerts.daily).toBeNull();
+
+    const statePath = path.join(tempHome, ".config", "cceye", "state.json");
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as { activeAlerts: { daily: string | null } };
+    state.activeAlerts.daily = "warning";
+    fs.writeFileSync(statePath, JSON.stringify(state));
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+    expect(calls).toBe(3);
+    expect(loadState().activeAlerts.daily).toBeNull();
     await storage.close();
   });
 

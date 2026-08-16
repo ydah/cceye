@@ -100,6 +100,49 @@ describe("delivery outbox worker", () => {
     expect(await storage.getDelivery("delivery-failure")).toMatchObject({ status: "dead", attempts: 2, lastError: "network failure" });
   });
 
+  it("reclaims a delivery lease left by a crashed worker", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cceye-outbox-"));
+    const databasePath = path.join(directory, "cceye.db");
+    const first = new SqliteUsageStorage(databasePath);
+    resources.push({ directory, storage: first });
+    await first.migrate();
+    await first.createAlert({
+      id: "alert-lease",
+      fingerprint: "daily:warning:lease",
+      windowKey: "daily",
+      windowStartMs: 0,
+      level: "warning",
+      state: "firing",
+      currentAmountNanos: 1n,
+      thresholdAmountNanos: 1n,
+      firstSeenAtMs: 1,
+      lastSeenAtMs: 1,
+      resolvedAtMs: null,
+    });
+    await first.enqueueDelivery({
+      id: "delivery-lease",
+      alertId: "alert-lease",
+      channel: "test",
+      transition: "firing",
+      status: "pending",
+      attempts: 0,
+      nextAttemptAtMs: 0,
+      lastError: null,
+      idempotencyKey: "idempotency-lease",
+      createdAtMs: 1,
+      deliveredAtMs: null,
+    });
+    await expect(first.claimDeliveries(0, 1)).resolves.toHaveLength(1);
+    await first.close();
+    const second = new SqliteUsageStorage(databasePath);
+    resources[0] = { directory, storage: second };
+    await second.migrate();
+
+    const retry = await second.claimDeliveries(5 * 60 * 1000 + 1, 1);
+    expect(retry).toHaveLength(1);
+    expect(retry[0]).toMatchObject({ id: "delivery-lease", status: "leased", attempts: 0 });
+  });
+
   it("dead-letters an orphaned delivery instead of retrying forever", async () => {
     const delivery = {
       id: "delivery-orphan",

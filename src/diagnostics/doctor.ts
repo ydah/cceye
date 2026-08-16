@@ -82,16 +82,17 @@ const listJsonlFiles = (root: string): string[] => {
     return [];
   }
   const results: string[] = [];
-  const stack = [path.resolve(root)];
+  const stack: Array<{ directory: string; depth: number }> = [{ directory: path.resolve(root), depth: 0 }];
+  const maxDepth = 32;
   while (stack.length > 0) {
     const current = stack.pop();
     if (!current) {
       continue;
     }
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const fullPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(fullPath);
+    for (const entry of fs.readdirSync(current.directory, { withFileTypes: true })) {
+      const fullPath = path.join(current.directory, entry.name);
+      if (entry.isDirectory() && current.depth < maxDepth) {
+        stack.push({ directory: fullPath, depth: current.depth + 1 });
       } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
         results.push(fullPath);
       }

@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import readline from "readline";
 import { z } from "zod";
+import { sanitizeDisplayLabel } from "./utils.js";
 
 export interface UsageEntry {
   timestamp: Date;
@@ -15,6 +16,18 @@ export interface UsageEntry {
   messageId: string | null;
   requestId: string | null;
   costUSD: number | null;
+}
+
+export type UsageLineErrorReason =
+  | "empty_line"
+  | "invalid_json"
+  | "schema_rejected"
+  | "missing_usage"
+  | "invalid_timestamp";
+
+export interface UsageLineParseResult {
+  entry: UsageEntry | null;
+  reason?: UsageLineErrorReason;
 }
 
 export interface FileIndexEntry {
@@ -31,6 +44,8 @@ const usageSchema = z
     cache_read_input_tokens: z.preprocess(toTokenNumber, z.number()).optional(),
   })
   .passthrough();
+
+const maxScanDepth = 32;
 
 function toTokenNumber(value: unknown): unknown {
   if (typeof value !== "string") {
@@ -80,7 +95,7 @@ function toOptionalNumber(value: unknown): number | null {
 
 export async function scanSessionFiles(rootDir: string): Promise<string[]> {
   const results: string[] = [];
-  const stack = [rootDir];
+  const stack: Array<{ directory: string; depth: number }> = [{ directory: rootDir, depth: 0 }];
 
   while (stack.length) {
     const current = stack.pop();
@@ -89,14 +104,14 @@ export async function scanSessionFiles(rootDir: string): Promise<string[]> {
     }
     let entries: fs.Dirent[] = [];
     try {
-      entries = fs.readdirSync(current, { withFileTypes: true });
+      entries = fs.readdirSync(current.directory, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const entry of entries) {
-      const fullPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(fullPath);
+      const fullPath = path.join(current.directory, entry.name);
+      if (entry.isDirectory() && current.depth < maxScanDepth) {
+        stack.push({ directory: fullPath, depth: current.depth + 1 });
       } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
         results.push(fullPath);
       }
@@ -128,35 +143,46 @@ export async function parseSessionFile(
 }
 
 export function parseUsageLine(line: string | Buffer): UsageEntry | null {
+  return parseUsageLineDetailed(line).entry;
+}
+
+export function parseUsageLineDetailed(line: string | Buffer): UsageLineParseResult {
   const text = typeof line === "string" ? line : line.toString("utf8");
   if (!text.trim()) {
-    return null;
+    return { entry: null, reason: "empty_line" };
   }
+  let raw: unknown;
   try {
-    const parsedLine = sessionLineSchema.safeParse(JSON.parse(text) as unknown);
-    if (!parsedLine.success) {
-      return null;
-    }
+    raw = JSON.parse(text) as unknown;
+  } catch {
+    return { entry: null, reason: "invalid_json" };
+  }
+  const parsedLine = sessionLineSchema.safeParse(raw);
+  if (!parsedLine.success) {
+    return { entry: null, reason: "schema_rejected" };
+  }
 
-    const parsed = parsedLine.data;
-    const usage = parsed.message?.usage;
-    if (!usage) {
-      return null;
-    }
+  const parsed = parsedLine.data;
+  const usage = parsed.message?.usage;
+  if (!usage) {
+    return { entry: null, reason: "missing_usage" };
+  }
 
-    const timestamp = new Date(parsed.timestamp);
-    if (Number.isNaN(timestamp.getTime())) {
-      return null;
-    }
+  const timestamp = new Date(parsed.timestamp);
+  if (Number.isNaN(timestamp.getTime())) {
+    return { entry: null, reason: "invalid_timestamp" };
+  }
 
-    return {
+  return {
+    entry: {
       timestamp,
-      model:
+      model: sanitizeDisplayLabel(
         typeof parsed.message?.model === "string"
           ? parsed.message.model
           : typeof parsed.model === "string"
             ? parsed.model
-            : "unknown",
+            : "unknown"
+      ),
       inputTokens: usage.input_tokens,
       outputTokens: usage.output_tokens,
       cacheCreationTokens:
@@ -165,8 +191,6 @@ export function parseUsageLine(line: string | Buffer): UsageEntry | null {
       messageId: typeof parsed.message?.id === "string" ? parsed.message.id : null,
       requestId: typeof parsed.requestId === "string" ? parsed.requestId : null,
       costUSD: toOptionalNumber(parsed.costUSD),
-    };
-  } catch {
-    return null;
-  }
+    },
+  };
 }

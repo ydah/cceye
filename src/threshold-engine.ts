@@ -8,7 +8,7 @@ export interface ThresholdResult {
 }
 
 export function evaluateThresholds(
-  costs: { daily: number; weekly: number; monthly: number },
+  costs: { daily: number | null; weekly: number | null; monthly: number | null },
   thresholds: Config["thresholds"]
 ): ThresholdResult[] {
   const windows: Array<"daily" | "weekly" | "monthly"> = ["daily", "weekly", "monthly"];
@@ -16,6 +16,9 @@ export function evaluateThresholds(
 
   for (const window of windows) {
     const cost = costs[window];
+    if (cost === null) {
+      continue;
+    }
     const { warning, critical } = thresholds[window];
     if (cost >= critical) {
       results.push({

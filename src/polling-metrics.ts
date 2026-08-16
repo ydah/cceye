@@ -1,11 +1,11 @@
 import type { ModelCost, ProjectCost, TrendPoint } from "./data-store.js";
 import type { UsageEntry } from "./log-parser.js";
 
-export function toModelBreakdown(byModel: Record<string, number>): ModelCost[] {
+export function toModelBreakdown(byModel: Record<string, number | null>): ModelCost[] {
   return Object.entries(byModel).map(([model, cost]) => ({ model, cost }));
 }
 
-export function toProjectBreakdown(byProject: Record<string, number>): ProjectCost[] {
+export function toProjectBreakdown(byProject: Record<string, number | null>): ProjectCost[] {
   return Object.entries(byProject).map(([project, cost]) => ({ project, cost }));
 }
 

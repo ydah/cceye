@@ -126,10 +126,13 @@ const configSchema = z
       }
     }
 
-    for (const alias of Object.keys(value.pricing.aliases)) {
+    const normalizedAliases = Object.fromEntries(
+      Object.entries(value.pricing.aliases).map(([alias, target]) => [alias.trim().toLowerCase(), target.trim().toLowerCase()])
+    );
+    for (const alias of Object.keys(normalizedAliases)) {
       const seen = new Set<string>();
       let current: string | undefined = alias;
-      while (current && value.pricing.aliases[current]) {
+      while (current && normalizedAliases[current]) {
         if (seen.has(current)) {
           context.addIssue({
             code: z.ZodIssueCode.custom,
@@ -139,7 +142,7 @@ const configSchema = z
           break;
         }
         seen.add(current);
-        current = value.pricing.aliases[current];
+        current = normalizedAliases[current];
       }
     }
   })

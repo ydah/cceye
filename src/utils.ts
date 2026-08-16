@@ -40,3 +40,8 @@ export function formatIsoUtc(date: Date): string {
 export function minutesFromNow(minutes: number, now: Date = new Date()): Date {
   return addMinutes(now, minutes);
 }
+
+export function sanitizeDisplayLabel(value: string, maxLength = 256): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u001f\u007f]/g, "�").slice(0, maxLength);
+}

@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS delivery_outbox (
   idempotency_key TEXT NOT NULL UNIQUE,
   created_at_ms INTEGER NOT NULL,
   delivered_at_ms INTEGER,
+  leased_at_ms INTEGER,
   FOREIGN KEY(alert_id) REFERENCES alert_instances(id) ON DELETE CASCADE
 );
 
@@ -90,7 +91,10 @@ CREATE TABLE IF NOT EXISTS billing_records (
   amount_nanos INTEGER NOT NULL,
   currency TEXT NOT NULL,
   dimensions_json TEXT NOT NULL,
-  fetched_at_ms INTEGER NOT NULL
+  fetched_at_ms INTEGER NOT NULL,
+  revision_key TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  is_current INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS parser_errors (

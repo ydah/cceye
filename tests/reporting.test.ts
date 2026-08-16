@@ -68,11 +68,29 @@ describe("buildReportRows", () => {
     expect(rows[0]?.totalCost).toBeCloseTo(0.3, 8);
     expect(rows[1]?.key).toBe("project-a/session-two");
   });
+
+  it("keeps unknown prices unavailable instead of converting them to zero", () => {
+    const rows = buildReportRows(
+      [entry({ costUSD: null })],
+      "daily",
+      { since: "20260215", until: "20260215", json: false, breakdown: false, timezone: "UTC" }
+    );
+
+    expect(rows[0]).toMatchObject({
+      totalCost: null,
+      byModel: { "claude-sonnet-4-20250514": null },
+      coverage: { unpricedEvents: 1, complete: false },
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    printReportRows(rows, { json: false, breakdown: false, timezone: "UTC" });
+    expect(String(log.mock.calls[0]?.[0])).toContain("UNPRICED");
+  });
 });
 
 describe("printReportRows", () => {
   it("prints plain and json output", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    log.mockClear();
     const rows = [
       {
         key: "2026-02-15",

@@ -40,7 +40,9 @@ Note: When `CLAUDE_CONFIG_DIR` is set, it overrides all other roots and must res
 Choose how costs are computed:
 - `auto`: use `costUSD` from log when present, otherwise calculate from token pricing
 - `calculate`: always calculate from token counts
-- `display`: always use `costUSD` from log (fallback to `0`)
+- `display`: always use `costUSD` from log; missing prices remain `UNPRICED`
+
+Estimated amounts are stored in integer nano-USD with their pricing catalog hash and match type. Unknown models are excluded from totals instead of being treated as zero, and reports expose coverage for incomplete data.
 
 ### Threshold Alerts
 
@@ -194,6 +196,8 @@ Commands:
 - If not installed globally, run commands with `npx cceye <command>`.
 - Notification cooldown state survives daemon restarts. Use an explicit state-management command when a manual reset is needed.
 - Delivery is at-least-once: a crash after a remote send and before local acknowledgement can produce a duplicate. Each outbox row has a local idempotency key.
+- Outbox deliveries are leased for five minutes; an interrupted worker's lease is reclaimed on the next poll. Dead deliveries remain visible to `doctor` and can be retried explicitly.
+- Database commands share a process lock, and a failed migration preserves the original database as `.failed-TIMESTAMP` instead of silently resetting it.
 
 ## Configuration
 
@@ -273,7 +277,7 @@ See `config.example.yaml` for a complete template.
 | `~/.config/cceye/pricing-cache.json` | Cached model pricing data |
 | `~/.config/cceye/cceye.db` | Transactional usage ledger, cursors, costs, alerts, and billing records |
 
-Database maintenance commands create private backups and never delete the legacy JSON files:
+The SQLite ledger is the source of truth for reports after the first poll. Database maintenance commands create private backups and never delete the legacy JSON files:
 
 ```bash
 cceye db check

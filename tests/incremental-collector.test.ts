@@ -83,6 +83,13 @@ describe("collectUsageIncrementally", () => {
     expect(third.entries).toHaveLength(1);
     expect(third.metrics.bytesRead).toBeGreaterThan(0);
 
+    fs.appendFileSync(file, `${JSON.stringify({ timestamp: 123, message: {} })}\n`);
+    const fourth = await collectUsageIncrementally(config, storage, pricing, { warn: () => {} });
+    expect(fourth.metrics.schemaRejectedLines).toBe(1);
+    await expect(storage.listParserErrors(10)).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ reason: "schema_rejected" })])
+    );
+
     const summary = await storage.queryUsage({ fromMs: 0, untilMs: Date.now() + 1, basis: "estimated" });
     expect(summary.events).toBe(2);
     expect(summary.coverage.complete).toBe(true);

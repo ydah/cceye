@@ -36,10 +36,7 @@
     "tui",
     "notifications"
   ],
-  "author": {
-    "name": "Yudai Takada",
-    "email": "t.yudai92@gmail.com"
-  },
+  "author": "Yudai Takada <t.yudai92@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -86,5 +83,9 @@
   },
   "allowScripts": {
     "better-sqlite3@12.11.1": true
-  }
+  },
+  "directories": {
+    "test": "tests"
+  },
+  "types": "./dist/index.d.ts"
 }

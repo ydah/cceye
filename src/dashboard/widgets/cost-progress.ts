@@ -3,9 +3,9 @@ import type { Config } from "../../config.js";
 import type { CostCoverage } from "../../storage/storage.js";
 
 interface CostProgressData {
-  daily: number;
-  weekly: number;
-  monthly: number;
+  daily: number | null;
+  weekly: number | null;
+  monthly: number | null;
 }
 
 export function renderCostProgress(
@@ -22,7 +22,11 @@ export function renderCostProgress(
   box.setContent(lines.join("\n\n"));
 }
 
-function renderLine(label: string, cost: number, warning: number, critical: number, coverage?: CostCoverage): string {
+function renderLine(label: string, cost: number | null, warning: number, critical: number, coverage?: CostCoverage): string {
+  if (cost === null) {
+    const quality = coverage ? ` (${coverage.unpricedEvents} unpriced)` : "";
+    return `${label.padEnd(7)} UNPRICED${quality}`;
+  }
   const ratio = critical > 0 ? Math.min(cost / critical, 1) : 0;
   const barLength = 20;
   const filled = Math.round(barLength * ratio);

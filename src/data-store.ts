@@ -9,12 +9,12 @@ import type { CostBasis, CostCoverage, DeliveryCounts, IngestionHealth } from ".
 
 export interface ModelCost {
   model: string;
-  cost: number;
+  cost: number | null;
 }
 
 export interface ProjectCost {
   project: string;
-  cost: number;
+  cost: number | null;
 }
 
 export interface TrendPoint {
@@ -34,7 +34,7 @@ export interface NotificationHistoryEntry {
 }
 
 export interface DataStoreState {
-  currentCosts: Record<WindowKey, number>;
+  currentCosts: Record<WindowKey, number | null>;
   modelBreakdown: Record<WindowKey, ModelCost[]>;
   projectBreakdown: Record<WindowKey, ProjectCost[]>;
   hourlyTrend: TrendPoint[];
@@ -53,12 +53,12 @@ const windows: WindowKey[] = ["daily", "weekly", "monthly"];
 
 const modelCostSchema = z.object({
   model: z.string(),
-  cost: z.number(),
+  cost: z.number().nullable(),
 });
 
 const projectCostSchema = z.object({
   project: z.string(),
-  cost: z.number(),
+  cost: z.number().nullable(),
 });
 
 const trendPointSchema = z.object({
@@ -100,9 +100,9 @@ const dataStoreSchema = z
   .object({
     currentCosts: z
       .object({
-        daily: z.number().optional(),
-        weekly: z.number().optional(),
-        monthly: z.number().optional(),
+        daily: z.number().nullable().optional(),
+        weekly: z.number().nullable().optional(),
+        monthly: z.number().nullable().optional(),
       })
       .partial()
       .optional(),
@@ -259,7 +259,7 @@ export function saveData(data: DataStoreState): void {
   fs.chmodSync(dataFilePath, 0o600);
 }
 
-export function updateCurrentCosts(data: DataStoreState, costs: Record<WindowKey, number>): void {
+export function updateCurrentCosts(data: DataStoreState, costs: Record<WindowKey, number | null>): void {
   data.currentCosts = { ...data.currentCosts, ...costs };
 }
 

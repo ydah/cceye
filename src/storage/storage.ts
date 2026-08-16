@@ -66,11 +66,32 @@ export interface IngestionHealth {
   durationMs: number;
 }
 
+export interface ParserError {
+  source: FileIdentity;
+  generation: number;
+  offset: number;
+  errorDigest: string;
+  reason: string;
+}
+
+export interface PricingCatalog {
+  catalogHash: string;
+  source: string;
+  fetchedAtMs: number;
+  status: string;
+  payloadJson: string;
+}
+
 export interface UsageBreakdown {
   key: string;
   amountNanos: MoneyNanos | null;
   events: number;
   unpricedEvents: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  pricedInputTokens?: number;
 }
 
 export interface CostCoverage {
@@ -131,6 +152,7 @@ export interface PendingDelivery {
   idempotencyKey: string;
   createdAtMs: number;
   deliveredAtMs: number | null;
+  leasedAtMs?: number | null;
 }
 
 export interface BillingRecord {
@@ -142,6 +164,9 @@ export interface BillingRecord {
   currency: string;
   dimensions: Record<string, string>;
   fetchedAtMs: number;
+  revisionKey?: string;
+  revision?: number;
+  isCurrent?: boolean;
 }
 
 export interface IntegrityResult {
@@ -165,10 +190,13 @@ export interface UsageStorage {
     events: NormalizedUsageEvent[];
     costs: EventCost[];
     cursors: FileCursor[];
+    parserErrors?: ParserError[];
+    pricingCatalog?: PricingCatalog | undefined;
   }): Promise<{ inserted: number; duplicates: number }>;
   queryUsage(query: UsageQuery): Promise<UsageSummary>;
   createAlert(alert: AlertInstance): Promise<void>;
   getAlert(id: string): Promise<AlertInstance | null>;
+  hasDeliveredDelivery(alertId: string, transition: PendingDelivery["transition"]): Promise<boolean>;
   enqueueDelivery(delivery: PendingDelivery): Promise<void>;
   claimDeliveries(nowMs: number, limit: number): Promise<PendingDelivery[]>;
   listDeliveries(nowMs: number, limit: number): Promise<PendingDelivery[]>;
@@ -178,8 +206,17 @@ export interface UsageStorage {
   updateDelivery(delivery: PendingDelivery): Promise<void>;
   recordIngestionHealth(health: IngestionHealth): Promise<void>;
   getLatestIngestionHealth(): Promise<IngestionHealth | null>;
+  listParserErrors(limit: number): Promise<ParserError[]>;
+  upsertPricingCatalog(catalog: PricingCatalog): Promise<void>;
+  getPricingCatalog(catalogHash: string): Promise<PricingCatalog | null>;
   upsertBillingRecord(record: BillingRecord): Promise<void>;
   queryBilling(fromMs: number, untilMs: number): Promise<BillingRecord[]>;
+  resolveAlert(input: {
+    fingerprint: string;
+    currentAmountNanos: MoneyNanos;
+    resolvedAtMs: number;
+  }): Promise<boolean>;
+  hasPendingRecovery(fingerprint: string): Promise<boolean>;
   checkIntegrity(): Promise<IntegrityResult>;
   close(): Promise<void>;
 }

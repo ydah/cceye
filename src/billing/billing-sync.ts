@@ -35,6 +35,7 @@ export const syncAnthropicBilling = async (
         );
         const record: BillingRecord = {
           recordId: stableRecordId(periodStartMs, periodEndMs, result.currency ?? "USD", dimensions, amountNanos),
+          revisionKey: stableRevisionKey(periodStartMs, periodEndMs, result.currency ?? "USD", dimensions),
           provider: "anthropic",
           periodStartMs,
           periodEndMs,
@@ -74,3 +75,11 @@ const stableRecordId = (
     .createHash("sha256")
     .update(`anthropic\0${periodStartMs}\0${periodEndMs}\0${currency}\0${JSON.stringify(dimensions)}\0${amountNanos}`)
     .digest("hex");
+
+const stableRevisionKey = (
+  periodStartMs: number,
+  periodEndMs: number,
+  currency: string,
+  dimensions: Record<string, string>
+): string =>
+  `anthropic\0${periodStartMs}\0${periodEndMs}\0${currency}\0${JSON.stringify(dimensions)}`;

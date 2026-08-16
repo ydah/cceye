@@ -7,6 +7,7 @@ export interface OutboxDrainResult {
   delivered: number;
   retrying: number;
   dead: number;
+  deliveredDeliveries: PendingDelivery[];
 }
 
 export async function drainDeliveryOutbox(
@@ -19,14 +20,14 @@ export async function drainDeliveryOutbox(
   const limit = options.limit ?? 50;
   const maxRetries = options.maxRetries ?? 5;
   const deliveries = await storage.claimDeliveries(nowMs, limit);
-  const result: OutboxDrainResult = { attempted: 0, delivered: 0, retrying: 0, dead: 0 };
+  const result: OutboxDrainResult = { attempted: 0, delivered: 0, retrying: 0, dead: 0, deliveredDeliveries: [] };
 
   for (const delivery of deliveries) {
     result.attempted += 1;
     const alertInstance = await storage.getAlert(delivery.alertId);
     if (!alertInstance) {
-      await updateFailedDelivery(storage, delivery, "alert instance not found", maxRetries);
-      result.dead += 1;
+      const status = await updateFailedDelivery(storage, delivery, "alert instance not found", maxRetries);
+      result[status] += 1;
       continue;
     }
 
@@ -49,6 +50,7 @@ export async function drainDeliveryOutbox(
         deliveredAtMs: Date.now(),
       });
       result.delivered += 1;
+      result.deliveredDeliveries.push({ ...delivery, status: "delivered", attempts: delivery.attempts + 1, leasedAtMs: null });
       continue;
     }
 

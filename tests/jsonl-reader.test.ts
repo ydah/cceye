@@ -34,4 +34,14 @@ describe("readJsonlIncrementally", () => {
     expect(result.rejected).toHaveLength(2);
     expect(result.committedOffset).toBe(fs.statSync(file).size);
   });
+
+  it("does not repeatedly rescan an oversized unterminated line", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cceye-reader-"));
+    const file = path.join(directory, "usage.jsonl");
+    fs.writeFileSync(file, "x".repeat(20));
+
+    const result = await readJsonlIncrementally(file, 0, { maxLineBytes: 10, chunkSize: 4 });
+    expect(result.rejected).toEqual([{ startOffset: 0, endOffset: 20, reason: "line_too_large" }]);
+    expect(result.committedOffset).toBe(20);
+  });
 });

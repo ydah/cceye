@@ -48,6 +48,7 @@ export interface ModelPricing {
   source?: string;
   cacheUpdatedAt?: number;
   catalogHash?: string | undefined;
+  catalogPayload?: Record<string, unknown> | undefined;
 }
 
 export type PricingStatus = "fresh" | "stale" | "fallback" | "unavailable";
@@ -240,8 +241,12 @@ function readCache(cachePath: string): { updatedAt: number; data: Record<string,
 }
 
 function writeCache(cachePath: string, data: Record<string, PriceEntry>): void {
-  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-  fs.writeFileSync(cachePath, JSON.stringify({ updatedAt: Date.now(), data }, null, 2), { mode: 0o600 });
+  fs.mkdirSync(path.dirname(cachePath), { recursive: true, mode: 0o700 });
+  fs.chmodSync(path.dirname(cachePath), 0o700);
+  const tempPath = `${cachePath}.tmp-${process.pid}`;
+  fs.writeFileSync(tempPath, JSON.stringify({ updatedAt: Date.now(), data }, null, 2), { mode: 0o600 });
+  fs.chmodSync(tempPath, 0o600);
+  fs.renameSync(tempPath, cachePath);
   fs.chmodSync(cachePath, 0o600);
 }
 
@@ -258,11 +263,20 @@ function buildPricing(
   const normalizedAliases = Object.fromEntries(
     Object.entries(aliases).map(([model, target]) => [normalizeModel(model), normalizeModel(target)])
   );
+  for (const [alias, target] of Object.entries(normalizedAliases)) {
+    if (alias.length === 0 || target.length === 0) {
+      throw new Error("pricing aliases must have non-empty model names");
+    }
+    if (!normalizedData[target] && !findFallback(target)) {
+      throw new Error(`pricing alias target is not present in the catalog: ${target}`);
+    }
+  }
 
   const pricing: ModelPricing = {
     status,
     source,
     catalogHash: hashCatalog(normalizedData),
+    catalogPayload: { table: normalizedData, fallback: fallbackPrices },
     getPrice(model: string) {
       const matched = findEntry(normalizedData, model, normalizedAliases);
       if (matched) {
@@ -319,6 +333,7 @@ function buildPricing(
         status: "unavailable",
         price: null,
         fetchedAt: cacheUpdatedAt,
+        catalogHash: pricing.catalogHash,
       };
     },
   };
