@@ -154,6 +154,17 @@ describe("parseSessionFile", () => {
     expect(result.parsedBytes).toBe(fs.statSync(file).size);
   });
 
+  it("sanitizes control characters in model labels", () => {
+    const result = parseUsageLineDetailed(
+      JSON.stringify({
+        timestamp: "2026-02-11T10:00:00.000Z",
+        message: { usage: { input_tokens: 1, output_tokens: 2 }, model: "model-\u001b[31m" },
+      })
+    );
+
+    expect(result.entry?.model).toBe("model-�[31m");
+  });
+
   it("coerces unknown optional fields to safe defaults", async () => {
     tempDir = createTempDir();
     const file = path.join(tempDir, "unknown-fields.jsonl");

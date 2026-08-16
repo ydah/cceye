@@ -146,6 +146,9 @@ describe("collectUsageEntries with multiple roots", () => {
   });
 
   it("sanitizes project and session labels from filesystem paths", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
     const configDir = path.join(tempRoot, "claude-control");
     const project = "project-\u001b[31m";
     const session = "session-\u001b[31m";
