@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import crypto from "crypto";
 import { z } from "zod";
+import { protectPrivateDirectory, protectPrivateFile } from "./file-permissions.js";
 
 const priceEntrySchema = z
   .object({
@@ -226,6 +227,8 @@ function readCache(cachePath: string): { updatedAt: number; data: Record<string,
     return null;
   }
   try {
+    protectPrivateDirectory(path.dirname(cachePath));
+    protectPrivateFile(cachePath);
     const raw = fs.readFileSync(cachePath, "utf8");
     const parsed = pricingCacheSchema.safeParse(JSON.parse(raw) as unknown);
     if (!parsed.success) {

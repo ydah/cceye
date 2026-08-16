@@ -335,6 +335,8 @@ rm -f ~/.local/state/cceye/daemon.pid
 
 cceye stores usage metadata and cost provenance locally. It does not store prompt or response bodies. Billing sync is disabled by default and sends only the configured date range to Anthropic's Cost Report API. API keys are read from the configured environment variable and are never written to the config file.
 
+On POSIX systems, the default config directory is kept at `0700` and private config, state, data, pricing-cache, and database files are kept at `0600`; existing files are re-hardened when read. An explicitly supplied `--config` path is protected at the file level, while its parent directory is left unchanged so shared custom paths are not modified unexpectedly. Windows uses its platform permission model.
+
 ### `config file not found`
 
 Create `~/.config/cceye/config.yaml` or pass `--config` explicitly.

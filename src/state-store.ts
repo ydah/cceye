@@ -4,6 +4,7 @@ import path from "path";
 import { formatISO, isAfter, startOfDay, startOfMonth, startOfWeek } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import { z } from "zod";
+import { protectPrivateDirectory, protectPrivateFile } from "./file-permissions.js";
 
 const windowKeys = ["daily", "weekly", "monthly"] as const;
 const levelKeys = ["warning", "critical"] as const;
@@ -119,6 +120,8 @@ export function loadState(): State {
     return createEmptyState();
   }
 
+  protectPrivateDirectory(path.dirname(stateFilePath));
+  protectPrivateFile(stateFilePath);
   const raw = fs.readFileSync(stateFilePath, "utf8");
   try {
     const parsedFile = stateFileSchema.safeParse(JSON.parse(raw) as unknown);

@@ -63,6 +63,23 @@ describe("state-store", () => {
     });
   });
 
+  it("repairs permissions on an existing state file", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const statePath = path.join(tempHome, ".config", "cceye", "state.json");
+    fs.mkdirSync(path.dirname(statePath), { recursive: true, mode: 0o755 });
+    fs.chmodSync(path.dirname(statePath), 0o755);
+    fs.writeFileSync(statePath, JSON.stringify({}), { mode: 0o644 });
+    fs.chmodSync(statePath, 0o644);
+    const { loadState } = await import("../src/state-store.ts");
+
+    loadState();
+
+    expect(fs.statSync(path.dirname(statePath)).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(statePath).mode & 0o777).toBe(0o600);
+  });
+
   it("persists state and evaluates cooldown", async () => {
     const mod = await import("../src/state-store.ts");
     const state = mod.loadState();

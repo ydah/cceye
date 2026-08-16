@@ -1,8 +1,8 @@
 import fs from "fs";
 import path from "path";
-import readline from "readline";
 import { z } from "zod";
 import { sanitizeDisplayLabel } from "./utils.js";
+import { maxJsonlLineBytes, readJsonlIncrementally } from "./ingestion/jsonl-reader.js";
 
 export interface UsageEntry {
   timestamp: Date;
@@ -23,7 +23,8 @@ export type UsageLineErrorReason =
   | "invalid_json"
   | "schema_rejected"
   | "missing_usage"
-  | "invalid_timestamp";
+  | "invalid_timestamp"
+  | "line_too_large";
 
 export interface UsageLineParseResult {
   entry: UsageEntry | null;
@@ -126,20 +127,16 @@ export async function parseSessionFile(
   startOffset = 0
 ): Promise<{ entries: UsageEntry[]; parsedBytes: number }> {
   const entries: UsageEntry[] = [];
-  let parsedBytes = startOffset;
+  const result = await readJsonlIncrementally(filePath, startOffset, { allowTrailingLine: true });
 
-  const stream = fs.createReadStream(filePath, { encoding: "utf8", start: startOffset });
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-
-  for await (const line of rl) {
-    parsedBytes += Buffer.byteLength(line, "utf8") + 1;
-    const entry = parseUsageLine(line);
+  for (const record of result.records) {
+    const entry = parseUsageLine(record.line);
     if (entry) {
       entries.push(entry);
     }
   }
 
-  return { entries, parsedBytes };
+  return { entries, parsedBytes: result.committedOffset };
 }
 
 export function parseUsageLine(line: string | Buffer): UsageEntry | null {
@@ -148,6 +145,9 @@ export function parseUsageLine(line: string | Buffer): UsageEntry | null {
 
 export function parseUsageLineDetailed(line: string | Buffer): UsageLineParseResult {
   const text = typeof line === "string" ? line : line.toString("utf8");
+  if (Buffer.byteLength(text, "utf8") > maxJsonlLineBytes) {
+    return { entry: null, reason: "line_too_large" };
+  }
   if (!text.trim()) {
     return { entry: null, reason: "empty_line" };
   }

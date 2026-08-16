@@ -21,15 +21,15 @@ export interface JsonlReadResult {
 }
 
 const defaultChunkSize = 64 * 1024;
-const defaultMaxLineBytes = 2 * 1024 * 1024;
+export const maxJsonlLineBytes = 2 * 1024 * 1024;
 
 export const readJsonlIncrementally = async (
   filePath: string,
   startOffset: number,
-  options?: { chunkSize?: number; maxLineBytes?: number }
+  options?: { chunkSize?: number; maxLineBytes?: number; allowTrailingLine?: boolean }
 ): Promise<JsonlReadResult> => {
   const chunkSize = options?.chunkSize ?? defaultChunkSize;
-  const maxLineBytes = options?.maxLineBytes ?? defaultMaxLineBytes;
+  const maxLineBytes = options?.maxLineBytes ?? maxJsonlLineBytes;
   const records: JsonlRecord[] = [];
   const rejected: RejectedJsonlRecord[] = [];
   let pending = Buffer.alloc(0);
@@ -99,6 +99,20 @@ export const readJsonlIncrementally = async (
   if (discarding) {
     rejected.push({ startOffset: discardedStartOffset, endOffset: streamOffset, reason: "line_too_large" });
     committedOffset = streamOffset;
+  } else if (options?.allowTrailingLine && pending.length > 0) {
+    const endOffset = pendingStartOffset + pending.length;
+    if (pending.length > maxLineBytes) {
+      rejected.push({ startOffset: pendingStartOffset, endOffset, reason: "line_too_large" });
+    } else {
+      const line = stripCarriageReturn(pending);
+      records.push({
+        line: removeBom(line, pendingStartOffset),
+        startOffset: pendingStartOffset,
+        endOffset,
+      });
+    }
+    committedOffset = endOffset;
+    pending = Buffer.alloc(0);
   }
 
   return {

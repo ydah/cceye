@@ -70,4 +70,21 @@ describe("data-store", () => {
     const { loadData, createEmptyData } = await import("../src/data-store.ts");
     expect(loadData()).toEqual(createEmptyData());
   });
+
+  it("repairs permissions on an existing data file", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const dataPath = path.join(tempHome, ".config", "cceye", "data.json");
+    fs.mkdirSync(path.dirname(dataPath), { recursive: true, mode: 0o755 });
+    fs.chmodSync(path.dirname(dataPath), 0o755);
+    fs.writeFileSync(dataPath, JSON.stringify({}), { mode: 0o644 });
+    fs.chmodSync(dataPath, 0o644);
+    const { loadData } = await import("../src/data-store.ts");
+
+    loadData();
+
+    expect(fs.statSync(path.dirname(dataPath)).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(dataPath).mode & 0o777).toBe(0o600);
+  });
 });

@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { WindowKey } from "./state-store.js";
 import type { DeliveryResult } from "./notifiers/types.js";
 import type { CostBasis, CostCoverage, DeliveryCounts, IngestionHealth } from "./storage/storage.js";
+import { protectPrivateDirectory, protectPrivateFile } from "./file-permissions.js";
 
 export interface ModelCost {
   model: string;
@@ -182,6 +183,8 @@ export function loadData(): DataStoreState {
   }
 
   try {
+    protectPrivateDirectory(path.dirname(dataFilePath));
+    protectPrivateFile(dataFilePath);
     const raw = fs.readFileSync(dataFilePath, "utf8");
     const parsedFile = dataStoreSchema.safeParse(JSON.parse(raw) as unknown);
     if (!parsedFile.success) {

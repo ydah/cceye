@@ -144,4 +144,28 @@ describe("collectUsageEntries with multiple roots", () => {
     expect(warn.mock.calls[0]?.[0]).not.toContain(configDirA);
     expect(warn.mock.calls[0]?.[0]).not.toContain(configDirB);
   });
+
+  it("sanitizes project and session labels from filesystem paths", async () => {
+    const configDir = path.join(tempRoot, "claude-control");
+    const project = "project-\u001b[31m";
+    const session = "session-\u001b[31m";
+    const sessionDir = path.join(configDir, "projects", project, session);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDir, "usage.jsonl"),
+      `${JSON.stringify({
+        timestamp: "2026-02-15T10:00:00.000Z",
+        message: { usage: { input_tokens: 1, output_tokens: 1 } },
+        costUSD: 0.3,
+      })}\n`
+    );
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+
+    const entries = await collectUsageEntries(createConfig(path.join(tempRoot, "ignored")), createState(), {
+      getPrice: () => null,
+    }, { warn: vi.fn() });
+
+    expect(entries[0]?.project).toBe("project-�[31m");
+    expect(entries[0]?.session).toBe("session-�[31m");
+  });
 });

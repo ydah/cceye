@@ -80,6 +80,22 @@ describe("loadPricing", () => {
     });
   });
 
+  it("repairs permissions on an existing pricing cache", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    writeCache(tempHome, Date.now(), {});
+    const cachePath = cachePathFor(tempHome);
+    fs.chmodSync(path.dirname(cachePath), 0o755);
+    fs.chmodSync(cachePath, 0o644);
+    const { loadPricing } = await import("../src/pricing.ts");
+
+    await loadPricing({ offline: true });
+
+    expect(fs.statSync(path.dirname(cachePath)).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(cachePath).mode & 0o777).toBe(0o600);
+  });
+
   it("fetches pricing data and writes cache when online", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,

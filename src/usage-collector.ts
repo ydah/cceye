@@ -6,6 +6,7 @@ import { calculateCost } from "./cost-calculator.js";
 import { parseSessionFile, scanSessionFiles, type UsageEntry } from "./log-parser.js";
 import type { ModelPricing } from "./pricing.js";
 import type { State } from "./state-store.js";
+import { sanitizeDisplayLabel } from "./utils.js";
 
 function toFileIndexKey(rootCount: number, rootIndex: number, root: string, file: string): string {
   const relative = path.relative(root, file).split(path.sep).join("/");
@@ -51,8 +52,8 @@ export async function collectUsageEntries(
     for (const file of files) {
       const stat = fs.statSync(file);
       const key = toFileIndexKey(roots.length, rootIndex, root, file);
-      const project = extractProjectFromFile(root, file);
-      const session = extractSessionFromFile(root, file);
+      const project = sanitizeDisplayLabel(extractProjectFromFile(root, file));
+      const session = sanitizeDisplayLabel(extractSessionFromFile(root, file));
       const { entries } = await parseSessionFile(file, 0);
       for (const entry of entries) {
         const uniqueHash =

@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import yaml from "yaml";
 import { z } from "zod";
+import { protectPrivateDirectory, protectPrivateFile } from "./file-permissions.js";
 
 const thresholdsSchema = z.object({
   warning: z.number().nonnegative(),
@@ -190,27 +191,51 @@ export function loadConfig(argPath?: string): Config {
     throw new Error(`config file not found: ${configPath}`);
   }
 
+  if (path.resolve(path.dirname(configPath)) === path.resolve(path.join(os.homedir(), ".config", "cceye"))) {
+    protectPrivateDirectory(path.dirname(configPath));
+  }
+  protectPrivateFile(configPath);
   const raw = fs.readFileSync(configPath, "utf8");
-  const parsed = yaml.parse(raw) ?? {};
+  let parsed: unknown;
+  try {
+    const document = yaml.parseDocument(raw);
+    if (document.errors.length > 0 || document.warnings.length > 0) {
+      throw new Error("config document contains YAML diagnostics");
+    }
+    parsed = document.toJS() ?? {};
+  } catch {
+    throw new Error("invalid config YAML");
+  }
   if (typeof parsed !== "object" || parsed === null) {
     throw new Error("config must be a YAML object");
   }
 
-  if (parsed.notifications?.slack?.enabled && !parsed.notifications.slack.webhook_url) {
+  const parsedConfig = parsed as Record<string, unknown>;
+  const notifications = asRecord(parsedConfig.notifications);
+  const slack = asRecord(notifications?.slack);
+  const email = asRecord(notifications?.email);
+
+  if (slack?.enabled === true && !slack.webhook_url) {
     const envWebhook = process.env.CCEYE_SLACK_WEBHOOK_URL;
     if (envWebhook) {
-      parsed.notifications.slack.webhook_url = envWebhook;
+      parsedConfig.notifications = {
+        ...notifications,
+        slack: { ...slack, webhook_url: envWebhook },
+      };
     }
   }
 
-  if (parsed.notifications?.email?.enabled && !parsed.notifications.email.smtp_pass) {
+  if (email?.enabled === true && !email.smtp_pass) {
     const envPass = process.env.CCEYE_SMTP_PASS;
     if (envPass) {
-      parsed.notifications.email.smtp_pass = envPass;
+      parsedConfig.notifications = {
+        ...asRecord(parsedConfig.notifications),
+        email: { ...email, smtp_pass: envPass },
+      };
     }
   }
 
-  const result = configSchema.safeParse(parsed);
+  const result = configSchema.safeParse(parsedConfig);
   if (!result.success) {
     throw new Error(formatZodError(result.error));
   }
@@ -225,6 +250,13 @@ export function loadConfig(argPath?: string): Config {
     pricing: result.data.pricing,
   };
 }
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+};
 
 export function loadConfigFromArgs(args: string[]): Config {
   const configIndex = args.findIndex((arg) => arg === "--config");
