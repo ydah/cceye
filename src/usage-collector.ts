@@ -8,7 +8,7 @@ import type { ModelPricing } from "./pricing.js";
 import type { State } from "./state-store.js";
 
 function toFileIndexKey(rootCount: number, rootIndex: number, root: string, file: string): string {
-  const relative = path.relative(root, file);
+  const relative = path.relative(root, file).split(path.sep).join("/");
   if (rootCount === 1) {
     return relative;
   }

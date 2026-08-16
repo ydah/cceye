@@ -27,7 +27,9 @@ describe("database management", () => {
     const target = path.join(directory, "backup.db");
     await expect(backupDatabase(databasePath, target)).resolves.toBe(target);
     expect(fs.existsSync(target)).toBe(true);
-    expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("rejects backups for a missing database", async () => {

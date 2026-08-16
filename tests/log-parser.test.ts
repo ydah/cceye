@@ -25,7 +25,7 @@ describe("scanSessionFiles", () => {
     fs.writeFileSync(path.join(tempDir, "a", "b", "ignored.txt"), "");
 
     const files = await scanSessionFiles(tempDir);
-    const relative = files.map((file) => path.relative(tempDir, file)).sort();
+    const relative = files.map((file) => path.relative(tempDir, file).split(path.sep).join("/")).sort();
     expect(relative).toEqual(["a/b/nested.jsonl", "root.jsonl"]);
   });
 

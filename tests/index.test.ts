@@ -6,11 +6,12 @@ import { pathToFileURL } from "url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const originalHome = process.env.HOME;
+const originalUserProfile = process.env.USERPROFILE;
 const originalPlatform = process.platform;
 const originalCwd = process.cwd();
 
 function writeConfig(configPath: string, dataDir: string): void {
-  const yaml = `claude_data_dir: "${dataDir}"
+  const yaml = `claude_data_dir: ${JSON.stringify(dataDir)}
 polling_interval_milliseconds: 300000
 timezone: "UTC"
 cost_mode: "calculate"
@@ -128,6 +129,7 @@ describe("index.ts", () => {
     fs.mkdirSync(tempHome, { recursive: true });
     fs.mkdirSync(dataDir, { recursive: true });
     process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
 
     writeConfig(configPath, dataDir);
     writePricingCache(tempHome);
@@ -138,6 +140,7 @@ describe("index.ts", () => {
     vi.restoreAllMocks();
     vi.useRealTimers();
     process.env.HOME = originalHome;
+    process.env.USERPROFILE = originalUserProfile;
     Object.defineProperty(process, "platform", { value: originalPlatform });
     process.chdir(originalCwd);
     if (tempRoot) {

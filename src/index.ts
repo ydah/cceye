@@ -1261,7 +1261,11 @@ export async function initConfig(): Promise<void> {
   const tempPath = `${targetPath}.tmp`;
   fs.writeFileSync(
     tempPath,
-    yaml.stringify(configValue, { defaultStringType: "QUOTE_DOUBLE", defaultKeyType: "PLAIN" }),
+    yaml.stringify(configValue, {
+      defaultStringType: "QUOTE_DOUBLE",
+      defaultKeyType: "PLAIN",
+      doubleQuotedAsJSON: true,
+    }),
     { mode: 0o600 }
   );
   fs.chmodSync(tempPath, 0o600);
