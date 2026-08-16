@@ -36,7 +36,7 @@ describe("collectUsageIncrementally", () => {
 
     const configPath = path.join(directory, "config.yaml");
     const configContent = [
-      `claude_data_dir: "${root}"`,
+      `claude_data_dir: ${JSON.stringify(root)}`,
       "polling_interval_milliseconds: 1000",
       'timezone: "UTC"',
       'cost_mode: "calculate"',
@@ -52,7 +52,7 @@ describe("collectUsageIncrementally", () => {
       "notification_cooldown_minutes: 60",
       'log_level: "info"',
       "dashboard: { refresh_interval_seconds: 60 }",
-      `storage: { database_path: "${databasePath}" }`,
+      `storage: { database_path: ${JSON.stringify(databasePath)} }`,
     ].join("\n");
     fs.writeFileSync(configPath, `${configContent}\n`);
     const config = loadConfig(configPath);
