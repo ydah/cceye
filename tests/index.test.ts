@@ -144,7 +144,7 @@ describe("index.ts", () => {
     Object.defineProperty(process, "platform", { value: originalPlatform });
     process.chdir(originalCwd);
     if (tempRoot) {
-      fs.rmSync(tempRoot, { recursive: true, force: true });
+      fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 
