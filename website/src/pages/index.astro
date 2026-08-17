@@ -6,26 +6,25 @@ const npmUrl = "https://www.npmjs.com/package/cceye";
 const features = [
   {
     number: "01",
-    title: "Track locally",
-    copy: "Read Claude Code JSONL logs where they already live. No account, sync service, or cloud data required.",
+    title: "Track usage",
+    copy: "Read Claude Code JSONL logs locally and keep your usage history in one place.",
   },
   {
     number: "02",
-    title: "Explain every cost",
-    copy: "Separate estimated, reported, and unpriced usage with pricing provenance you can inspect.",
+    title: "Understand costs",
+    copy: "See how each amount was calculated, including pricing coverage and unpriced models.",
   },
   {
     number: "03",
-    title: "Act before limits",
-    copy: "Set daily, weekly, and monthly thresholds with console, Slack, email, and macOS notifications.",
+    title: "Set alerts",
+    copy: "Get notified when daily, weekly, or monthly thresholds need your attention.",
   },
 ];
 
 const steps = [
-  { number: "01", label: "Discover", copy: "Find Claude Code project logs" },
-  { number: "02", label: "Normalize", copy: "Parse usage into a durable ledger" },
-  { number: "03", label: "Understand", copy: "Report costs and quality signals" },
-  { number: "04", label: "Notify", copy: "Deliver threshold alerts reliably" },
+  ["01", "Find your logs", "cceye discovers Claude Code project files."],
+  ["02", "Collect usage", "New entries are added without re-reading everything."],
+  ["03", "Report clearly", "Costs, trends, and data quality stay visible."],
 ];
 ---
 
@@ -38,7 +37,7 @@ const steps = [
       name="description"
       content="cceye is a local-first usage and cost monitor for Claude Code."
     />
-    <meta name="theme-color" content="#071925" />
+    <meta name="theme-color" content="#ffffff" />
     <link rel="icon" type="image/svg+xml" href={base + "/favicon.svg"} />
     <title>cceye — Claude Code cost visibility</title>
   </head>
@@ -55,130 +54,102 @@ const steps = [
         <div class="nav-links">
           <a href={base + "#features"}>Features</a>
           <a href={base + "#how-it-works"}>How it works</a>
-          <a href={githubUrl} target="_blank" rel="noreferrer">GitHub <span class="external-arrow" aria-hidden="true">↗</span></a>
+          <a href={githubUrl} target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
         </div>
-        <a class="nav-cta" href={base + "#get-started"}>Get started <span aria-hidden="true">→</span></a>
+        <a class="nav-button" href={base + "#get-started"}>Get started</a>
       </nav>
     </header>
 
     <main>
-      <section class="hero container">
-        <div class="hero-copy">
-          <div class="eyebrow"><span class="status-dot" aria-hidden="true"></span> LOCAL-FIRST COST VISIBILITY</div>
-          <h1>Make every<br /><em>token count.</em></h1>
-          <p class="hero-lede">
-            cceye turns Claude Code usage logs into clear costs, reliable alerts, and decisions you can trust — without sending your data anywhere.
-          </p>
-          <div class="hero-actions">
-            <a class="button button-primary" href={githubUrl} target="_blank" rel="noreferrer">
-              View on GitHub <span aria-hidden="true">↗</span>
-            </a>
-            <a class="button button-quiet" href={base + "#get-started"}>See how it works <span aria-hidden="true">↓</span></a>
+      <section class="hero">
+        <div class="container hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">CLAUDE CODE USAGE MONITOR</p>
+            <h1>Know what your<br /><span>tokens cost.</span></h1>
+            <p class="hero-description">
+              cceye turns local Claude Code logs into clear usage reports, explainable costs, and timely alerts.
+            </p>
+            <div class="actions">
+              <a class="button button-primary" href={githubUrl} target="_blank" rel="noreferrer">View on GitHub <span aria-hidden="true">↗</span></a>
+              <a class="button button-secondary" href={base + "#get-started"}>Get started <span aria-hidden="true">↓</span></a>
+            </div>
+            <p class="small-note">Open source · Local by default · MIT licensed</p>
           </div>
-          <div class="hero-note"><span class="lock-icon" aria-hidden="true">⌁</span> Local by default <span class="note-divider">·</span> MIT licensed <span class="note-divider">·</span> Node.js 20+</div>
-        </div>
 
-        <div class="hero-visual">
-          <div class="visual-glow" aria-hidden="true"></div>
-          <div class="dashboard-window" role="img" aria-label="Illustration of a cceye cost dashboard">
-            <div class="window-chrome">
-              <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-              <span class="window-title">cceye / status</span>
-              <span class="window-live"><span class="live-dot"></span> LIVE</span>
+          <div class="overview-card" aria-label="Example cceye status summary">
+            <div class="card-header">
+              <span>cceye status</span>
+              <span class="status"><span class="status-dot"></span> Ready</span>
             </div>
-            <div class="dashboard-body">
-              <div class="dashboard-topline">
-                <div>
-                  <span class="dashboard-label">THIS MONTH</span>
-                  <strong class="dashboard-total">$18.42</strong>
-                </div>
-                <div class="trend-pill"><span aria-hidden="true">↗</span> 12.8%</div>
-              </div>
-              <div class="dashboard-chart" aria-hidden="true">
-                <div class="chart-grid"><span></span><span></span><span></span><span></span></div>
-                <div class="chart-bars"><i class="bar bar-1"></i><i class="bar bar-2"></i><i class="bar bar-3"></i><i class="bar bar-4"></i><i class="bar bar-5"></i><i class="bar bar-6"></i><i class="bar bar-7"></i><i class="bar bar-8"></i><i class="bar bar-9"></i><i class="bar bar-10"></i><i class="bar bar-11"></i><i class="bar bar-12"></i></div>
-              </div>
-              <div class="dashboard-stats">
-                <div class="mini-stat"><span>Input tokens</span><strong>2.4M</strong></div>
-                <div class="mini-stat"><span>Output tokens</span><strong>684K</strong></div>
-                <div class="mini-stat"><span>Coverage</span><strong class="coverage-value">98.7%</strong></div>
-              </div>
-              <div class="dashboard-footer"><span><span class="tiny-dot"></span> All systems clear</span><span>Updated just now</span></div>
+            <div class="summary">
+              <span class="label">Current month</span>
+              <strong>$18.42</strong>
+              <span class="summary-note">Estimated usage · 98.7% priced</span>
             </div>
+            <div class="summary-list">
+              <div><span>Input tokens</span><strong>2.4M</strong></div>
+              <div><span>Output tokens</span><strong>684K</strong></div>
+              <div><span>Sessions</span><strong>42</strong></div>
+            </div>
+            <div class="card-footer"><span class="status-dot"></span> All thresholds within range</div>
           </div>
-          <div class="floating-tag tag-top"><span class="tag-icon">$</span> PRICING PROVENANCE</div>
-          <div class="floating-tag tag-bottom"><span class="tag-check" aria-hidden="true">✓</span> THRESHOLD SAFE</div>
         </div>
       </section>
 
-      <section class="signal-strip" aria-label="Product properties">
-        <div class="container signal-items">
-          <div><span class="signal-index">01</span><strong>Private by design</strong><span>Logs stay on your machine.</span></div>
-          <div><span class="signal-index">02</span><strong>Built for clarity</strong><span>No mystery totals.</span></div>
-          <div><span class="signal-index">03</span><strong>Ready for action</strong><span>Alerts when it matters.</span></div>
+      <section class="trust-row">
+        <div class="container trust-items">
+          <span>Built for Claude Code</span>
+          <span>Runs on macOS, Linux, and Windows</span>
+          <span>No cloud account required</span>
         </div>
       </section>
 
       <section class="section container" id="features">
-        <div class="section-heading">
-          <div>
-            <span class="section-kicker">WHY CCEYE</span>
-            <h2>The useful layer<br /><span>between logs and limits.</span></h2>
-          </div>
-          <p>Usage data is only useful when it is accurate, explainable, and connected to the next decision. cceye keeps that path short.</p>
+        <div class="section-intro">
+          <p class="eyebrow">WHAT IT DOES</p>
+          <h2>Useful information,<br /><span>without the noise.</span></h2>
+          <p>Spend less time guessing and more time building. cceye keeps the important signals close at hand.</p>
         </div>
         <div class="feature-grid">
           {features.map((feature) => (
             <article class="feature-card">
-              <div class="feature-number">{feature.number}</div>
-              <div class="feature-rule" aria-hidden="true"></div>
+              <span class="feature-number">{feature.number}</span>
               <h3>{feature.title}</h3>
               <p>{feature.copy}</p>
-              <span class="feature-arrow" aria-hidden="true">↗</span>
             </article>
           ))}
         </div>
       </section>
 
-      <section class="process-section" id="how-it-works">
-        <div class="container process-layout">
-          <div class="process-intro">
-            <span class="section-kicker">HOW IT WORKS</span>
-            <h2>From raw usage<br /><span>to clear action.</span></h2>
-            <p>A small, local pipeline that makes cost visibility a part of your normal development workflow.</p>
-            <a class="text-link" href={githubUrl} target="_blank" rel="noreferrer">Read the source <span aria-hidden="true">↗</span></a>
+      <section class="how-section" id="how-it-works">
+        <div class="container how-grid">
+          <div class="section-intro">
+            <p class="eyebrow">HOW IT WORKS</p>
+            <h2>A short path from<br /><span>logs to action.</span></h2>
+            <p>Everything stays local, so you can inspect the data and the calculation whenever you need to.</p>
           </div>
-          <div class="steps-list">
-            {steps.map((step, index) => (
-              <div class="step-row">
-                <span class="step-number">{step.number}</span>
-                <div class="step-copy"><strong>{step.label}</strong><span>{step.copy}</span></div>
-                <span class:list={["step-status", index === steps.length - 1 && "step-status-final"]} aria-hidden="true">{index === steps.length - 1 ? "→" : "·"}</span>
+          <div class="steps">
+            {steps.map((step) => (
+              <div class="step">
+                <span class="step-number">{step[0]}</span>
+                <div><h3>{step[1]}</h3><p>{step[2]}</p></div>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      <section class="section install-section container" id="get-started">
-        <div class="install-card">
-          <div class="install-copy">
-            <span class="section-kicker">GET STARTED</span>
-            <h2>See your usage<br /><span>in a clearer light.</span></h2>
-            <p>Install cceye in one command. Start with a local status check, then add the workflow that fits your team.</p>
-            <div class="install-links">
-              <a class="button button-primary" href={npmUrl} target="_blank" rel="noreferrer">Install from npm <span aria-hidden="true">↗</span></a>
-              <a class="button button-quiet" href={githubUrl} target="_blank" rel="noreferrer">Explore the repo <span aria-hidden="true">↗</span></a>
-            </div>
+      <section class="section container" id="get-started">
+        <div class="start-card">
+          <div>
+            <p class="eyebrow">GET STARTED</p>
+            <h2>Start with one<br /><span>simple command.</span></h2>
+            <p>Install cceye globally, then run a status check against your local Claude Code data.</p>
           </div>
-          <div class="code-card" aria-label="Installation command">
-            <div class="code-card-top"><span class="code-dot"></span> Terminal <span class="code-path">~/projects</span></div>
-            <pre><code><span class="prompt">$</span> npm install -g cceye
-<span class="prompt">$</span> cceye status
-
-<span class="code-muted">✓ Usage collected</span>
-<span class="code-muted">✓ Pricing resolved</span>
-<span class="code-success">✓ No threshold breaches</span></code></pre>
+          <div class="command-block" aria-label="Installation commands">
+            <code><span>$</span> npm install -g cceye</code>
+            <code><span>$</span> cceye status</code>
+            <a href={npmUrl} target="_blank" rel="noreferrer">View package on npm <span aria-hidden="true">↗</span></a>
           </div>
         </div>
       </section>
@@ -193,7 +164,7 @@ const steps = [
           </svg>
           <span>cceye</span>
         </a>
-        <span class="footer-note">A local-first usage FinOps tool for Claude Code.</span>
+        <span class="footer-note">Local-first cost visibility for Claude Code.</span>
         <div class="footer-links"><a href={githubUrl} target="_blank" rel="noreferrer">GitHub ↗</a><a href={npmUrl} target="_blank" rel="noreferrer">npm ↗</a><span>MIT License</span></div>
       </div>
     </footer>
