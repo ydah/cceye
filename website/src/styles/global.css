@@ -1,14 +1,14 @@
 :root {
-  --blue-900: #0c4a6e;
-  --blue-700: #0369a1;
-  --blue-500: #0ea5e9;
-  --blue-100: #e0f2fe;
-  --orange: #ea580c;
-  --text: #17212b;
-  --muted: #52616d;
-  --border: #dbe4ea;
-  --background: #ffffff;
-  --surface: #f5f9fb;
+  --blue-900: #e6f4ff;
+  --blue-700: #7dd3fc;
+  --blue-500: #38bdf8;
+  --blue-100: #bae6fd;
+  --orange: #fb923c;
+  --text: #e5edf5;
+  --muted: #a9b5c2;
+  --border: #263747;
+  --background: #0b1117;
+  --surface: #111a23;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: var(--text);
   background: var(--background);
@@ -53,7 +53,7 @@ a:focus-visible {
   position: relative;
   z-index: 2;
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.96);
+  background: rgba(11, 17, 23, 0.96);
 }
 
 .nav {
@@ -202,11 +202,11 @@ h2 span {
 }
 
 .button-primary:hover {
-  background: #c2410c;
+  background: #fdba74;
 }
 
 .button-secondary {
-  border: 1px solid #a9bac5;
+  border: 1px solid #557183;
   color: var(--blue-900);
 }
 
@@ -217,16 +217,16 @@ h2 span {
 
 .small-note {
   margin: 22px 0 0;
-  color: #6d7d88;
+  color: var(--muted);
   font-size: 13px;
 }
 
 .overview-card {
   overflow: hidden;
-  border: 1px solid #c9d8e0;
+  border: 1px solid #334856;
   border-radius: 8px;
   background: var(--background);
-  box-shadow: 0 12px 28px rgba(12, 74, 110, 0.08);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
 }
 
 .card-header {
@@ -245,7 +245,7 @@ h2 span {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: #15803d;
+  color: #86efac;
   font-size: 12px;
   font-weight: 500;
 }
@@ -255,7 +255,7 @@ h2 span {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #22c55e;
+  background: #4ade80;
 }
 
 .summary {
@@ -396,8 +396,8 @@ h2 span {
 }
 
 .feature-card:hover {
-  border-color: #8ecbe5;
-  box-shadow: 0 8px 20px rgba(12, 74, 110, 0.07);
+  border-color: var(--blue-500);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
 }
 
 .feature-number,
@@ -494,9 +494,9 @@ h2 span {
   gap: 12px;
   padding: 22px;
   border-radius: 6px;
-  background: var(--blue-900);
-  color: #e0f2fe;
-  box-shadow: 0 7px 0 #c9d8e0;
+  background: #071018;
+  color: #d7f1ff;
+  box-shadow: 0 7px 0 #20313d;
 }
 
 .command-block code {
@@ -523,7 +523,7 @@ h2 span {
 }
 
 .command-block a:hover {
-  color: var(--background);
+  color: var(--blue-500);
 }
 
 .site-footer {
