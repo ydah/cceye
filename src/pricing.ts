@@ -1,7 +1,9 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 import { z } from "zod";
+import { protectPrivateDirectory, protectPrivateFile } from "./file-permissions.js";
 
 const priceEntrySchema = z
   .object({
@@ -42,6 +44,25 @@ export interface ModelPrice {
 
 export interface ModelPricing {
   getPrice(model: string): ModelPrice | null;
+  explain?(model: string): PricingExplanation;
+  status?: PricingStatus;
+  source?: string;
+  cacheUpdatedAt?: number;
+  catalogHash?: string | undefined;
+  catalogPayload?: Record<string, unknown> | undefined;
+}
+
+export type PricingStatus = "fresh" | "stale" | "fallback" | "unavailable";
+
+export interface PricingExplanation {
+  rawModel: string;
+  matchedModel: string | null;
+  matchType: "exact" | "normalized" | "explicit_alias" | "provider_prefix" | "fallback" | "unpriced";
+  source: string;
+  status: PricingStatus;
+  price: ModelPrice | null;
+  fetchedAt: number | null;
+  catalogHash?: string | undefined;
 }
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -49,9 +70,6 @@ const PRICING_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const providerPrefixes = [
   "anthropic/",
-  "claude-3-5-",
-  "claude-3-",
-  "claude-",
   "openrouter/openai/",
   "openai/",
   "azure/",
@@ -120,25 +138,34 @@ function createModelCandidates(model: string): string[] {
   return Array.from(candidates).filter((candidate) => candidate.length > 0);
 }
 
-function findEntry(data: Record<string, PriceEntry>, model: string): PriceEntry | null {
-  const candidates = createModelCandidates(model);
-  for (const candidate of candidates) {
+interface MatchedPriceEntry {
+  entry: PriceEntry;
+  model: string;
+  matchType: PricingExplanation["matchType"];
+}
+
+function findEntry(
+  data: Record<string, PriceEntry>,
+  model: string,
+  aliases: Record<string, string> = {}
+): MatchedPriceEntry | null {
+  const normalizedModel = normalizeModel(model);
+  const aliasTarget = aliases[normalizedModel];
+  const candidates = createModelCandidates(aliasTarget ?? model);
+  const normalized = normalizeModel(model);
+  for (const [index, candidate] of candidates.entries()) {
     const matched = data[candidate];
     if (matched) {
-      return matched;
+      const matchType = aliasTarget
+        ? "explicit_alias"
+        : index === 0
+          ? "exact"
+          : candidate === normalized
+            ? "normalized"
+            : "provider_prefix";
+      return { entry: matched, model: candidate, matchType };
     }
   }
-
-  const normalized = normalizeModel(model);
-  for (const [key, value] of Object.entries(data)) {
-    if (key.includes(normalized)) {
-      return value;
-    }
-    if (normalized.includes(key) && (key.includes("-") || key.includes("/"))) {
-      return value;
-    }
-  }
-
   return null;
 }
 
@@ -153,29 +180,46 @@ function findFallback(model: string): { input: number; output: number; cacheCrea
   return null;
 }
 
-export async function loadPricing(options?: { offline?: boolean }): Promise<ModelPricing> {
+export async function loadPricing(options?: { offline?: boolean; aliases?: Record<string, string> }): Promise<ModelPricing> {
   const cachePath = path.join(os.homedir(), ".config", "cceye", "pricing-cache.json");
   const cached = readCache(cachePath);
 
   if (cached && Date.now() - cached.updatedAt < CACHE_TTL_MS) {
-    return buildPricing(cached.data);
+    return buildPricing(cached.data, "fresh", "LiteLLM cache", cached.updatedAt, options?.aliases);
   }
 
   if (options?.offline) {
-    return buildPricing(cached?.data ?? {});
+    return buildPricing(
+      cached?.data ?? {},
+      cached ? "stale" : Object.keys(fallbackPrices).length > 0 ? "fallback" : "unavailable",
+      cached ? "LiteLLM stale cache" : "built-in fallback",
+      cached?.updatedAt ?? null,
+      options?.aliases
+    );
   }
 
-  const response = await fetch(PRICING_URL);
-  if (!response.ok) {
-    return buildPricing(cached?.data ?? {});
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    timeout.unref?.();
+    try {
+      const response = await fetch(PRICING_URL, { signal: controller.signal });
+      if (!response.ok) {
+        return buildPricing(cached?.data ?? {}, cached ? "stale" : "fallback", "LiteLLM fallback", cached?.updatedAt ?? null, options?.aliases);
+      }
+      const parsedData = pricingTableSchema.safeParse(await response.json());
+      if (!parsedData.success) {
+        return buildPricing(cached?.data ?? {}, cached ? "stale" : "fallback", "LiteLLM fallback", cached?.updatedAt ?? null, options?.aliases);
+      }
+      const data = parsedData.data;
+      writeCache(cachePath, data);
+      return buildPricing(data, "fresh", "LiteLLM", Date.now(), options?.aliases);
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch {
+    return buildPricing(cached?.data ?? {}, cached ? "stale" : "fallback", "LiteLLM fallback", cached?.updatedAt ?? null, options?.aliases);
   }
-  const parsedData = pricingTableSchema.safeParse(await response.json());
-  if (!parsedData.success) {
-    return buildPricing(cached?.data ?? {});
-  }
-  const data = parsedData.data;
-  writeCache(cachePath, data);
-  return buildPricing(data);
 }
 
 function readCache(cachePath: string): { updatedAt: number; data: Record<string, PriceEntry> } | null {
@@ -183,6 +227,8 @@ function readCache(cachePath: string): { updatedAt: number; data: Record<string,
     return null;
   }
   try {
+    protectPrivateDirectory(path.dirname(cachePath));
+    protectPrivateFile(cachePath);
     const raw = fs.readFileSync(cachePath, "utf8");
     const parsed = pricingCacheSchema.safeParse(JSON.parse(raw) as unknown);
     if (!parsed.success) {
@@ -195,22 +241,48 @@ function readCache(cachePath: string): { updatedAt: number; data: Record<string,
 }
 
 function writeCache(cachePath: string, data: Record<string, PriceEntry>): void {
-  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-  fs.writeFileSync(cachePath, JSON.stringify({ updatedAt: Date.now(), data }, null, 2));
+  fs.mkdirSync(path.dirname(cachePath), { recursive: true, mode: 0o700 });
+  fs.chmodSync(path.dirname(cachePath), 0o700);
+  const tempPath = `${cachePath}.tmp-${process.pid}`;
+  fs.writeFileSync(tempPath, JSON.stringify({ updatedAt: Date.now(), data }, null, 2), { mode: 0o600 });
+  fs.chmodSync(tempPath, 0o600);
+  fs.renameSync(tempPath, cachePath);
+  fs.chmodSync(cachePath, 0o600);
 }
 
-function buildPricing(data: Record<string, PriceEntry>): ModelPricing {
+function buildPricing(
+  data: Record<string, PriceEntry>,
+  status: PricingStatus,
+  source: string,
+  cacheUpdatedAt: number | null,
+  aliases: Record<string, string> = {}
+): ModelPricing {
   const normalizedData = Object.fromEntries(
     Object.entries(data).map(([model, entry]) => [normalizeModel(model), entry])
   );
+  const normalizedAliases = Object.fromEntries(
+    Object.entries(aliases).map(([model, target]) => [normalizeModel(model), normalizeModel(target)])
+  );
+  for (const [alias, target] of Object.entries(normalizedAliases)) {
+    if (alias.length === 0 || target.length === 0) {
+      throw new Error("pricing aliases must have non-empty model names");
+    }
+    if (!normalizedData[target] && !findFallback(target)) {
+      throw new Error(`pricing alias target is not present in the catalog: ${target}`);
+    }
+  }
 
-  return {
+  const pricing: ModelPricing = {
+    status,
+    source,
+    catalogHash: hashCatalog(normalizedData),
+    catalogPayload: { table: normalizedData, fallback: fallbackPrices },
     getPrice(model: string) {
-      const entry = findEntry(normalizedData, model);
-      if (entry) {
-        return toModelPrice(entry);
+      const matched = findEntry(normalizedData, model, normalizedAliases);
+      if (matched) {
+        return toModelPrice(matched.entry);
       }
-      const fallback = findFallback(model);
+      const fallback = findFallback(normalizedAliases[normalizeModel(model)] ?? model);
       if (!fallback) {
         return null;
       }
@@ -221,7 +293,60 @@ function buildPricing(data: Record<string, PriceEntry>): ModelPricing {
         cacheReadPerMTok: fallback.cacheRead,
       };
     },
+    explain(model: string): PricingExplanation {
+      const matched = findEntry(normalizedData, model, normalizedAliases);
+      if (matched) {
+        return {
+          rawModel: model,
+          matchedModel: matched.model,
+          matchType: matched.matchType,
+          source,
+          status,
+          price: toModelPrice(matched.entry),
+          fetchedAt: cacheUpdatedAt,
+          catalogHash: pricing.catalogHash,
+        };
+      }
+      const aliasTarget = normalizedAliases[normalizeModel(model)];
+      const fallback = findFallback(aliasTarget ?? model);
+      if (fallback) {
+        return {
+          rawModel: model,
+          matchedModel: normalizeModel(aliasTarget ?? model),
+          matchType: aliasTarget ? "explicit_alias" : "fallback",
+          source: "built-in fallback",
+          status: status === "fresh" ? "fallback" : status,
+          price: {
+            inputPerMTok: fallback.input,
+            outputPerMTok: fallback.output,
+            cacheCreatePerMTok: fallback.cacheCreate,
+            cacheReadPerMTok: fallback.cacheRead,
+          },
+          fetchedAt: cacheUpdatedAt,
+          catalogHash: pricing.catalogHash,
+        };
+      }
+      return {
+        rawModel: model,
+        matchedModel: null,
+        matchType: "unpriced",
+        source,
+        status: "unavailable",
+        price: null,
+        fetchedAt: cacheUpdatedAt,
+        catalogHash: pricing.catalogHash,
+      };
+    },
   };
+  if (cacheUpdatedAt !== null) {
+    pricing.cacheUpdatedAt = cacheUpdatedAt;
+  }
+  return pricing;
+}
+
+function hashCatalog(data: Record<string, PriceEntry>): string {
+  const canonical = Object.fromEntries(Object.entries(data).sort(([left], [right]) => left.localeCompare(right)));
+  return crypto.createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 
 function normalizeModel(model: string): string {

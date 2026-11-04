@@ -18,9 +18,13 @@ function calculateTieredCost(tokens: number, basePerMTok: number, abovePerMTok?:
   return (belowThresholdTokens * basePerMTok + aboveThresholdTokens * abovePerMTok) / 1_000_000;
 }
 
-export function calculateCost(entry: UsageEntry, mode: CostMode, pricing: ModelPricing): number {
+export function calculateCost(entry: UsageEntry, mode: CostMode, pricing: ModelPricing): number | null {
+  return calculateCostExact(entry, mode, pricing);
+}
+
+export function calculateCostExact(entry: UsageEntry, mode: CostMode, pricing: ModelPricing): number | null {
   if (mode === "display") {
-    return entry.costUSD ?? 0;
+    return entry.costUSD;
   }
   if (mode === "auto" && entry.costUSD !== null) {
     return entry.costUSD;
@@ -28,7 +32,7 @@ export function calculateCost(entry: UsageEntry, mode: CostMode, pricing: ModelP
 
   const price = pricing.getPrice(entry.model);
   if (!price) {
-    return 0;
+    return null;
   }
 
   const inputCost = calculateTieredCost(entry.inputTokens, price.inputPerMTok, price.inputPerMTokAbove200k);

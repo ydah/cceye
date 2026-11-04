@@ -11,6 +11,7 @@ export class SlackNotifier implements Notifier {
   private enabled: boolean;
   private webhookUrl: string | undefined;
   private mention: string;
+  private readonly timeoutMilliseconds = 15_000;
 
   constructor(config: NotificationConfig) {
     this.enabled = config.notifications.slack.enabled;
@@ -23,15 +24,15 @@ export class SlackNotifier implements Notifier {
       return;
     }
 
-    const label = alert.level === "critical" ? "CRITICAL" : "WARNING";
+    const label = alert.transition === "recovery" ? "RECOVERY" : alert.level === "critical" ? "CRITICAL" : "WARNING";
     const message = `${this.mention ? `${this.mention} ` : ""}${label} ${formatWindowLabel(
       alert.window
-    )} cost exceeded: $${alert.currentCost.toFixed(2)} / $${alert.threshold.toFixed(2)}`;
+    )} ${alert.transition === "recovery" ? "cost recovered" : `cost exceeded: $${alert.currentCost.toFixed(2)} / $${alert.threshold.toFixed(2)}`}`;
 
     const payload = {
       attachments: [
         {
-          color: levelColors[alert.level],
+          color: alert.transition === "recovery" ? "#36a64f" : levelColors[alert.level],
           blocks: [
             {
               type: "section",
@@ -54,11 +55,23 @@ export class SlackNotifier implements Notifier {
       ],
     };
 
-    const response = await fetch(this.webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMilliseconds);
+    timeout.unref?.();
+    let response: Response;
+    try {
+      response = await fetch(this.webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(alert.idempotencyKey ? { "X-Cceye-Idempotency-Key": alert.idempotencyKey } : {}),
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!response.ok) {
       throw new Error(`slack webhook request failed with status ${response.status}`);
     }

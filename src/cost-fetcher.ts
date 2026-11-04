@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "timers/promises";
+import fs from "fs";
 import { z } from "zod";
 import { formatIsoUtc } from "./utils.js";
 
@@ -41,6 +42,7 @@ export async function fetchCostForPeriod(
 ): Promise<number> {
   let total = 0;
   let nextPage: string | undefined;
+  const seenPages = new Set<string>();
 
   do {
     const url = new URL("https://api.anthropic.com/v1/organizations/cost_report");
@@ -52,6 +54,10 @@ export async function fetchCostForPeriod(
       url.searchParams.append("group_by[]", "description");
     }
     if (nextPage) {
+      if (seenPages.has(nextPage)) {
+        throw new Error("cost report API returned a repeated page token");
+      }
+      seenPages.add(nextPage);
       url.searchParams.set("page", nextPage);
     }
 
@@ -81,6 +87,7 @@ export async function fetchCostReport(
 ): Promise<CostReportResponse> {
   const data: CostReportResponse = { data: [] };
   let nextPage: string | undefined;
+  const seenPages = new Set<string>();
 
   do {
     const url = new URL("https://api.anthropic.com/v1/organizations/cost_report");
@@ -92,6 +99,10 @@ export async function fetchCostReport(
       url.searchParams.append("group_by[]", "description");
     }
     if (nextPage) {
+      if (seenPages.has(nextPage)) {
+        throw new Error("cost report API returned a repeated page token");
+      }
+      seenPages.add(nextPage);
       url.searchParams.set("page", nextPage);
     }
 
@@ -116,35 +127,61 @@ async function fetchWithRetry(url: string, adminApiKey: string, attempt: number)
   const headers = {
     "anthropic-version": "2023-06-01",
     "x-api-key": adminApiKey,
-    "User-Agent": "cceye/1.0.0",
+    "User-Agent": `cceye/${readPackageVersion()}`,
   };
 
   try {
-    const response = await fetch(url, { headers });
-    if (response.status === 401 || response.status === 403) {
-      throw new Error("authentication failed (check Admin API key)");
-    }
-
-    if (response.status === 429) {
-      if (attempt >= 3) {
-        throw new Error("rate limit exceeded after retries");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    timeout.unref?.();
+    try {
+      const response = await fetch(url, { headers, signal: controller.signal });
+      if (response.status === 401 || response.status === 403) {
+        throw new AuthenticationError("authentication failed (check Admin API key)");
       }
-      const retryAfter = response.headers.get("retry-after");
-      const waitMs = retryAfter ? Number(retryAfter) * 1000 : 1000 * Math.pow(2, attempt);
-      await delay(waitMs);
-      return fetchWithRetry(url, adminApiKey, attempt + 1);
-    }
 
-    if (!response.ok) {
-      throw new Error(`cost report API error: ${response.status}`);
-    }
+      if (response.status === 429) {
+        if (attempt >= 3) {
+          throw new Error("rate limit exceeded after retries");
+        }
+        const retryAfter = response.headers.get("retry-after");
+        const parsedRetryAfter = retryAfter ? Number(retryAfter) * 1000 : Number.NaN;
+        const fallback = 1_000 * 2 ** attempt;
+        const waitMs = Number.isFinite(parsedRetryAfter) && parsedRetryAfter >= 0 ? Math.min(parsedRetryAfter, 60_000) : fallback;
+        const jitter = Math.floor(Math.random() * Math.max(1, Math.floor(waitMs * 0.2)));
+        await delay(waitMs + jitter);
+        return fetchWithRetry(url, adminApiKey, attempt + 1);
+      }
 
-    return response;
+      if (!response.ok) {
+        throw new Error(`cost report API error: ${response.status}`);
+      }
+
+      return response;
+    } finally {
+      clearTimeout(timeout);
+    }
   } catch (error) {
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
     if (attempt >= 3) {
       throw error;
     }
     await delay(1000 * Math.pow(2, attempt));
     return fetchWithRetry(url, adminApiKey, attempt + 1);
+  }
+}
+
+class AuthenticationError extends Error {}
+
+function readPackageVersion(): string {
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+      version?: unknown;
+    };
+    return typeof packageJson.version === "string" ? packageJson.version : "unknown";
+  } catch {
+    return "unknown";
   }
 }

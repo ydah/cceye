@@ -40,7 +40,9 @@ Note: When `CLAUDE_CONFIG_DIR` is set, it overrides all other roots and must res
 Choose how costs are computed:
 - `auto`: use `costUSD` from log when present, otherwise calculate from token pricing
 - `calculate`: always calculate from token counts
-- `display`: always use `costUSD` from log (fallback to `0`)
+- `display`: always use `costUSD` from log; missing prices remain `UNPRICED`
+
+Estimated amounts are stored in integer nano-USD with their pricing catalog hash and match type. Unknown models are excluded from totals instead of being treated as zero, and reports expose coverage for incomplete data.
 
 ### Threshold Alerts
 
@@ -70,7 +72,7 @@ Each report supports date filters and JSON output options.
 
 ### Smart Pricing Cache
 
-Pricing is fetched from LiteLLM and cached at `~/.config/cceye/pricing-cache.json` (24h TTL), with fallback prices for known models.
+Pricing is fetched from LiteLLM and cached at `~/.config/cceye/pricing-cache.json` (24h TTL), with fallback prices for known models. Network failures are reported as stale/fallback pricing and do not stop local monitoring. Use `cceye prices explain MODEL` to inspect the exact model match and price source; unknown models remain unpriced instead of becoming zero-dollar usage.
 
 ### macOS Background Service
 
@@ -167,6 +169,14 @@ Commands:
   weekly     Print weekly usage report
   monthly    Print monthly usage report
   session    Print session usage report
+  prices     Explain model pricing provenance
+  billing    Sync or inspect optional Anthropic billing data
+  reconcile  Compare local usage with provider billing
+  doctor     Check local data quality and database health
+  notifications reset  Clear notification cooldown state
+  alerts retry ID  Retry a failed notification delivery
+  notify test [--channel NAME]  Send a test notification without changing thresholds
+  db check|backup|rebuild  Check, back up, or rebuild the SQLite ledger
   init       Interactive config generator
   install    Install macOS LaunchAgent
   uninstall  Remove macOS LaunchAgent
@@ -181,8 +191,13 @@ Commands:
   - `--breakdown`
   - `--timezone <IANA TZ>`
   - `--offline`
+  - `--show-coverage`
+  - `--top N` and `--other` for breakdown output
 - If not installed globally, run commands with `npx cceye <command>`.
-- Starting with no arguments (`cceye`) clears notification cooldown flags once before daemon startup.
+- Notification cooldown state survives daemon restarts. Use an explicit state-management command when a manual reset is needed.
+- Delivery is at-least-once: a crash after a remote send and before local acknowledgement can produce a duplicate. Each outbox row has a local idempotency key.
+- Outbox deliveries are leased for five minutes; an interrupted worker's lease is reclaimed on the next poll. Dead deliveries remain visible to `doctor` and can be retried explicitly.
+- Database commands share a process lock, and a failed migration preserves the original database as `.failed-TIMESTAMP` instead of silently resetting it.
 
 ## Configuration
 
@@ -215,7 +230,12 @@ See `config.example.yaml` for a complete template.
 | `notifications.email.*` | SMTP sender/recipient/auth settings |
 | `notification_cooldown_minutes` | Cooldown for repeated alerts of same window/level |
 | `log_level` | `debug`, `info`, `warn`, `error` |
-| `dashboard.refresh_interval_seconds` | Required setting (currently not used by runtime logic) |
+| `dashboard.refresh_interval_seconds` | Dashboard redraw interval; independent from usage polling |
+| `alerts.notify_on_recovery` | Send a notification when a threshold returns below warning |
+| `alerts.max_retries` | Maximum attempts before a delivery becomes dead |
+| `storage.database_path` | Absolute path to the SQLite usage ledger |
+| `pricing.aliases` | Explicit raw-model to catalog-model mappings |
+| `billing.anthropic.enabled` | Enable manual Cost Report sync (disabled by default) |
 
 ### Validation rules
 
@@ -253,8 +273,19 @@ See `config.example.yaml` for a complete template.
 |------|---------|
 | `~/.config/cceye/config.yaml` | Runtime configuration |
 | `~/.config/cceye/state.json` | Notification state, cooldown markers, and internal state |
-| `~/.config/cceye/data.json` | Dashboard-facing current aggregates and history |
+| `~/.config/cceye/data.json` | Dashboard-facing current aggregates, coverage, and history |
 | `~/.config/cceye/pricing-cache.json` | Cached model pricing data |
+| `~/.config/cceye/cceye.db` | Transactional usage ledger, cursors, costs, alerts, and billing records |
+
+The SQLite ledger is the source of truth for reports after the first poll. Database maintenance commands create private backups and never delete the legacy JSON files:
+
+```bash
+cceye db check
+cceye db backup
+cceye db rebuild
+```
+
+If migration fails, the database is preserved with a `.failed-TIMESTAMP` suffix for inspection.
 
 ## Run as a Background Daemon
 
@@ -299,6 +330,12 @@ rm -f ~/.local/state/cceye/daemon.pid
 ```
 
 ## Troubleshooting
+
+### Privacy model
+
+cceye stores usage metadata and cost provenance locally. It does not store prompt or response bodies. Billing sync is disabled by default and sends only the configured date range to Anthropic's Cost Report API. API keys are read from the configured environment variable and are never written to the config file.
+
+On POSIX systems, the default config directory is kept at `0700` and private config, state, data, pricing-cache, and database files are kept at `0600`; existing files are re-hardened when read. An explicitly supplied `--config` path is protected at the file level, while its parent directory is left unchanged so shared custom paths are not modified unexpectedly. Windows uses its platform permission model.
 
 ### `config file not found`
 

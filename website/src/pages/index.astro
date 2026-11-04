@@ -1,0 +1,176 @@
+---
+const base = import.meta.env.BASE_URL;
+const githubUrl = "https://github.com/ydah/cceye";
+const npmUrl = "https://www.npmjs.com/package/cceye";
+
+const features = [
+  {
+    number: "01",
+    title: "Track usage",
+    copy: "Read Claude Code JSONL logs locally and keep your usage history in one place.",
+  },
+  {
+    number: "02",
+    title: "Understand costs",
+    copy: "See how each amount was calculated, including pricing coverage and unpriced models.",
+  },
+  {
+    number: "03",
+    title: "Set alerts",
+    copy: "Get notified when daily, weekly, or monthly thresholds need your attention.",
+  },
+];
+
+const steps = [
+  ["01", "Find your logs", "cceye discovers Claude Code project files."],
+  ["02", "Collect usage", "New entries are added without re-reading everything."],
+  ["03", "Report clearly", "Costs, trends, and data quality stay visible."],
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta
+      name="description"
+      content="cceye is a local-first usage and cost monitor for Claude Code."
+    />
+    <meta name="theme-color" content="#0b1117" />
+    <link rel="icon" type="image/svg+xml" href={base + "/favicon.svg"} />
+    <title>cceye — Claude Code cost visibility</title>
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav container" aria-label="Main navigation">
+        <a class="brand" href={base} aria-label="cceye home">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M4.4 16s4.2-7 11.6-7 11.6 7 11.6 7-4.2 7-11.6 7S4.4 16 4.4 16Z" />
+            <circle cx="16" cy="16" r="3.25" />
+          </svg>
+          <span>cceye</span>
+        </a>
+        <div class="nav-links">
+          <a href={base + "#features"}>Features</a>
+          <a href={base + "#how-it-works"}>How it works</a>
+          <a href={githubUrl} target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+        <a class="nav-button" href={base + "#get-started"}>Get started</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="container hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">CLAUDE CODE USAGE MONITOR</p>
+            <h1>Know what your<br /><span>tokens cost.</span></h1>
+            <p class="hero-description">
+              cceye turns local Claude Code logs into clear usage reports, explainable costs, and timely alerts.
+            </p>
+            <div class="actions">
+              <a class="button button-primary" href={githubUrl} target="_blank" rel="noreferrer">View on GitHub <span aria-hidden="true">↗</span></a>
+              <a class="button button-secondary" href={base + "#get-started"}>Get started <span aria-hidden="true">↓</span></a>
+            </div>
+            <p class="small-note">Open source · Local by default · MIT licensed</p>
+          </div>
+
+          <div class="overview-card" aria-label="Example cceye status summary">
+            <div class="card-header">
+              <span>cceye status</span>
+              <span class="status"><span class="status-dot"></span> Ready</span>
+            </div>
+            <div class="summary">
+              <span class="label">Current month</span>
+              <strong>$18.42</strong>
+              <span class="summary-note">Estimated usage · 98.7% priced</span>
+            </div>
+            <div class="summary-list">
+              <div><span>Input tokens</span><strong>2.4M</strong></div>
+              <div><span>Output tokens</span><strong>684K</strong></div>
+              <div><span>Sessions</span><strong>42</strong></div>
+            </div>
+            <div class="card-footer"><span class="status-dot"></span> All thresholds within range</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="trust-row">
+        <div class="container trust-items">
+          <span>Built for Claude Code</span>
+          <span>Runs on macOS, Linux, and Windows</span>
+          <span>No cloud account required</span>
+        </div>
+      </section>
+
+      <section class="section container" id="features">
+        <div class="section-intro">
+          <p class="eyebrow">WHAT IT DOES</p>
+          <h2>Useful information,<br /><span>without the noise.</span></h2>
+          <p>Spend less time guessing and more time building. cceye keeps the important signals close at hand.</p>
+        </div>
+        <div class="feature-grid">
+          {features.map((feature) => (
+            <article class="feature-card">
+              <span class="feature-number">{feature.number}</span>
+              <h3>{feature.title}</h3>
+              <p>{feature.copy}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section class="how-section" id="how-it-works">
+        <div class="container how-grid">
+          <div class="section-intro">
+            <p class="eyebrow">HOW IT WORKS</p>
+            <h2>A short path from<br /><span>logs to action.</span></h2>
+            <p>Everything stays local, so you can inspect the data and the calculation whenever you need to.</p>
+          </div>
+          <div class="steps">
+            {steps.map((step) => (
+              <div class="step">
+                <span class="step-number">{step[0]}</span>
+                <div><h3>{step[1]}</h3><p>{step[2]}</p></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section class="section container" id="get-started">
+        <div class="start-card">
+          <div>
+            <p class="eyebrow">GET STARTED</p>
+            <h2>Start with one<br /><span>simple command.</span></h2>
+            <p>Install cceye globally, then run a status check against your local Claude Code data.</p>
+          </div>
+          <div class="command-block" aria-label="Installation commands">
+            <code><span>$</span> npm install -g cceye</code>
+            <code><span>$</span> cceye status</code>
+            <a href={npmUrl} target="_blank" rel="noreferrer">View package on npm <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <a class="brand" href={base} aria-label="cceye home">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M4.4 16s4.2-7 11.6-7 11.6 7 11.6 7-4.2 7-11.6 7S4.4 16 4.4 16Z" />
+            <circle cx="16" cy="16" r="3.25" />
+          </svg>
+          <span>cceye</span>
+        </a>
+        <span class="footer-note">Local-first cost visibility for Claude Code.</span>
+        <div class="footer-links"><a href={githubUrl} target="_blank" rel="noreferrer">GitHub ↗</a><a href={npmUrl} target="_blank" rel="noreferrer">npm ↗</a><span>MIT License</span></div>
+      </div>
+    </footer>
+  </body>
+</html>
+
+<style is:global>
+  @import "../styles/global.css";
+</style>

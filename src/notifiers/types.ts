@@ -4,12 +4,19 @@ export interface Alert {
   currentCost: number;
   threshold: number;
   timestamp: Date;
+  transition?: "firing" | "recovery";
+  idempotencyKey?: string;
 }
 
 export interface Notifier {
   name: string;
   send(alert: Alert): Promise<void>;
 }
+
+export type DeliveryResult =
+  | { channel: string; status: "success" }
+  | { channel: string; status: "failed"; error: string }
+  | { channel: string; status: "skipped"; reason: string };
 
 export interface NotificationConfig {
   notifications: {

@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
-import readline from "readline";
 import { z } from "zod";
+import { sanitizeDisplayLabel } from "./utils.js";
+import { maxJsonlLineBytes, readJsonlIncrementally } from "./ingestion/jsonl-reader.js";
 
 export interface UsageEntry {
   timestamp: Date;
@@ -15,6 +16,19 @@ export interface UsageEntry {
   messageId: string | null;
   requestId: string | null;
   costUSD: number | null;
+}
+
+export type UsageLineErrorReason =
+  | "empty_line"
+  | "invalid_json"
+  | "schema_rejected"
+  | "missing_usage"
+  | "invalid_timestamp"
+  | "line_too_large";
+
+export interface UsageLineParseResult {
+  entry: UsageEntry | null;
+  reason?: UsageLineErrorReason;
 }
 
 export interface FileIndexEntry {
@@ -31,6 +45,8 @@ const usageSchema = z
     cache_read_input_tokens: z.preprocess(toTokenNumber, z.number()).optional(),
   })
   .passthrough();
+
+const maxScanDepth = 32;
 
 function toTokenNumber(value: unknown): unknown {
   if (typeof value !== "string") {
@@ -80,7 +96,7 @@ function toOptionalNumber(value: unknown): number | null {
 
 export async function scanSessionFiles(rootDir: string): Promise<string[]> {
   const results: string[] = [];
-  const stack = [rootDir];
+  const stack: Array<{ directory: string; depth: number }> = [{ directory: rootDir, depth: 0 }];
 
   while (stack.length) {
     const current = stack.pop();
@@ -89,14 +105,14 @@ export async function scanSessionFiles(rootDir: string): Promise<string[]> {
     }
     let entries: fs.Dirent[] = [];
     try {
-      entries = fs.readdirSync(current, { withFileTypes: true });
+      entries = fs.readdirSync(current.directory, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const entry of entries) {
-      const fullPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(fullPath);
+      const fullPath = path.join(current.directory, entry.name);
+      if (entry.isDirectory() && current.depth < maxScanDepth) {
+        stack.push({ directory: fullPath, depth: current.depth + 1 });
       } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
         results.push(fullPath);
       }
@@ -111,58 +127,70 @@ export async function parseSessionFile(
   startOffset = 0
 ): Promise<{ entries: UsageEntry[]; parsedBytes: number }> {
   const entries: UsageEntry[] = [];
-  let parsedBytes = startOffset;
+  const result = await readJsonlIncrementally(filePath, startOffset, { allowTrailingLine: true });
 
-  const stream = fs.createReadStream(filePath, { encoding: "utf8", start: startOffset });
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-
-  for await (const line of rl) {
-    parsedBytes += Buffer.byteLength(line, "utf8") + 1;
-    if (!line.trim()) {
-      continue;
-    }
-    try {
-      const parsedLine = sessionLineSchema.safeParse(JSON.parse(line) as unknown);
-      if (!parsedLine.success) {
-        continue;
-      }
-
-      const parsed = parsedLine.data;
-      const usage = parsed.message?.usage;
-      if (!usage) {
-        continue;
-      }
-
-      const totalCacheCreation =
-        typeof usage.cache_creation_input_tokens === "number"
-          ? usage.cache_creation_input_tokens
-          : 0;
-      const cacheReadTokens = typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0;
-      const timestamp = new Date(parsed.timestamp);
-      if (Number.isNaN(timestamp.getTime())) {
-        continue;
-      }
-
-      entries.push({
-        timestamp,
-        model:
-          typeof parsed.message?.model === "string"
-            ? parsed.message.model
-            : typeof parsed.model === "string"
-              ? parsed.model
-              : "unknown",
-        inputTokens: usage.input_tokens,
-        outputTokens: usage.output_tokens,
-        cacheCreationTokens: totalCacheCreation,
-        cacheReadTokens,
-        messageId: typeof parsed.message?.id === "string" ? parsed.message.id : null,
-        requestId: typeof parsed.requestId === "string" ? parsed.requestId : null,
-        costUSD: toOptionalNumber(parsed.costUSD),
-      });
-    } catch {
-      continue;
+  for (const record of result.records) {
+    const entry = parseUsageLine(record.line);
+    if (entry) {
+      entries.push(entry);
     }
   }
 
-  return { entries, parsedBytes };
+  return { entries, parsedBytes: result.committedOffset };
+}
+
+export function parseUsageLine(line: string | Buffer): UsageEntry | null {
+  return parseUsageLineDetailed(line).entry;
+}
+
+export function parseUsageLineDetailed(line: string | Buffer): UsageLineParseResult {
+  const text = typeof line === "string" ? line : line.toString("utf8");
+  if (Buffer.byteLength(text, "utf8") > maxJsonlLineBytes) {
+    return { entry: null, reason: "line_too_large" };
+  }
+  if (!text.trim()) {
+    return { entry: null, reason: "empty_line" };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text) as unknown;
+  } catch {
+    return { entry: null, reason: "invalid_json" };
+  }
+  const parsedLine = sessionLineSchema.safeParse(raw);
+  if (!parsedLine.success) {
+    return { entry: null, reason: "schema_rejected" };
+  }
+
+  const parsed = parsedLine.data;
+  const usage = parsed.message?.usage;
+  if (!usage) {
+    return { entry: null, reason: "missing_usage" };
+  }
+
+  const timestamp = new Date(parsed.timestamp);
+  if (Number.isNaN(timestamp.getTime())) {
+    return { entry: null, reason: "invalid_timestamp" };
+  }
+
+  return {
+    entry: {
+      timestamp,
+      model: sanitizeDisplayLabel(
+        typeof parsed.message?.model === "string"
+          ? parsed.message.model
+          : typeof parsed.model === "string"
+            ? parsed.model
+            : "unknown"
+      ),
+      inputTokens: usage.input_tokens,
+      outputTokens: usage.output_tokens,
+      cacheCreationTokens:
+        typeof usage.cache_creation_input_tokens === "number" ? usage.cache_creation_input_tokens : 0,
+      cacheReadTokens: typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0,
+      messageId: typeof parsed.message?.id === "string" ? parsed.message.id : null,
+      requestId: typeof parsed.requestId === "string" ? parsed.requestId : null,
+      costUSD: toOptionalNumber(parsed.costUSD),
+    },
+  };
 }

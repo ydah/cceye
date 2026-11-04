@@ -4,6 +4,7 @@ import path from "path";
 import { formatISO, isAfter, startOfDay, startOfMonth, startOfWeek } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import { z } from "zod";
+import { protectPrivateDirectory, protectPrivateFile } from "./file-permissions.js";
 
 const windowKeys = ["daily", "weekly", "monthly"] as const;
 const levelKeys = ["warning", "critical"] as const;
@@ -17,6 +18,7 @@ export interface NotificationHistoryEntry {
   level: LevelKey;
   cost: number;
   threshold: number;
+  transition?: "firing" | "recovery" | undefined;
 }
 
 export interface FileIndexEntry {
@@ -36,6 +38,7 @@ export interface State {
   notificationHistory: NotificationHistoryEntry[];
   fileIndex: Record<string, FileIndexEntry>;
   cachedCosts: Record<WindowKey, CachedCostWindow>;
+  activeAlerts: Record<WindowKey, LevelKey | null>;
 }
 
 const stateFilePath = path.join(os.homedir(), ".config", "cceye", "state.json");
@@ -46,6 +49,7 @@ const notificationHistoryEntrySchema = z.object({
   level: z.enum(levelKeys),
   cost: z.number(),
   threshold: z.number(),
+  transition: z.enum(["firing", "recovery"]).optional(),
 });
 
 const fileIndexEntrySchema = z.object({
@@ -73,6 +77,7 @@ const stateFileSchema = z
       })
       .partial()
       .optional(),
+    activeAlerts: z.record(z.string(), z.enum(levelKeys).nullable()).optional(),
   })
   .passthrough();
 
@@ -106,6 +111,7 @@ function createEmptyState(): State {
       weekly: emptyCachedWindow(),
       monthly: emptyCachedWindow(),
     },
+    activeAlerts: { daily: null, weekly: null, monthly: null },
   };
 }
 
@@ -114,6 +120,8 @@ export function loadState(): State {
     return createEmptyState();
   }
 
+  protectPrivateDirectory(path.dirname(stateFilePath));
+  protectPrivateFile(stateFilePath);
   const raw = fs.readFileSync(stateFilePath, "utf8");
   try {
     const parsedFile = stateFileSchema.safeParse(JSON.parse(raw) as unknown);
@@ -137,6 +145,7 @@ export function loadState(): State {
         weekly: { ...emptyState.cachedCosts.weekly, ...(parsed.cachedCosts?.weekly ?? {}) },
         monthly: { ...emptyState.cachedCosts.monthly, ...(parsed.cachedCosts?.monthly ?? {}) },
       },
+      activeAlerts: { ...emptyState.activeAlerts, ...(parsed.activeAlerts ?? {}) },
     };
   } catch {
     return createEmptyState();
@@ -145,11 +154,14 @@ export function loadState(): State {
 
 export function saveState(state: State): void {
   const dir = path.dirname(stateFilePath);
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
 
   const tempPath = `${stateFilePath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(state, null, 2));
+  fs.writeFileSync(tempPath, JSON.stringify(state, null, 2), { mode: 0o600 });
+  fs.chmodSync(tempPath, 0o600);
   fs.renameSync(tempPath, stateFilePath);
+  fs.chmodSync(stateFilePath, 0o600);
 }
 
 export function shouldNotify(
@@ -176,7 +188,17 @@ export function recordNotification(
 ): void {
   const key = notificationKey(entry.window, entry.level);
   state.notifications[key] = entry.timestamp;
+  state.activeAlerts[entry.window] = entry.level;
   state.notificationHistory = [entry, ...state.notificationHistory].slice(0, maxEntries);
+}
+
+export function recordRecoveryNotification(
+  state: State,
+  entry: Omit<NotificationHistoryEntry, "transition">,
+  maxEntries = 100
+): void {
+  state.activeAlerts[entry.window] = null;
+  state.notificationHistory = [{ ...entry, transition: "recovery" as const }, ...state.notificationHistory].slice(0, maxEntries);
 }
 
 export function clearNotificationFlags(state: State): void {
@@ -184,6 +206,7 @@ export function clearNotificationFlags(state: State): void {
     for (const level of levelKeys) {
       state.notifications[notificationKey(window, level)] = null;
     }
+    state.activeAlerts[window] = null;
   }
 }
 
@@ -218,5 +241,6 @@ function clearWindow(state: State, window: WindowKey): void {
   for (const level of levelKeys) {
     state.notifications[notificationKey(window, level)] = null;
   }
+  state.activeAlerts[window] = null;
   state.cachedCosts[window] = emptyCachedWindow();
 }

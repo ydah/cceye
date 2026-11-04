@@ -6,11 +6,12 @@ import { pathToFileURL } from "url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const originalHome = process.env.HOME;
+const originalUserProfile = process.env.USERPROFILE;
 const originalPlatform = process.platform;
 const originalCwd = process.cwd();
 
 function writeConfig(configPath: string, dataDir: string): void {
-  const yaml = `claude_data_dir: "${dataDir}"
+  const yaml = `claude_data_dir: ${JSON.stringify(dataDir)}
 polling_interval_milliseconds: 300000
 timezone: "UTC"
 cost_mode: "calculate"
@@ -128,6 +129,7 @@ describe("index.ts", () => {
     fs.mkdirSync(tempHome, { recursive: true });
     fs.mkdirSync(dataDir, { recursive: true });
     process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
 
     writeConfig(configPath, dataDir);
     writePricingCache(tempHome);
@@ -138,10 +140,11 @@ describe("index.ts", () => {
     vi.restoreAllMocks();
     vi.useRealTimers();
     process.env.HOME = originalHome;
+    process.env.USERPROFILE = originalUserProfile;
     Object.defineProperty(process, "platform", { value: originalPlatform });
     process.chdir(originalCwd);
     if (tempRoot) {
-      fs.rmSync(tempRoot, { recursive: true, force: true });
+      fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 
@@ -190,6 +193,27 @@ describe("index.ts", () => {
     expect(payload).toContain('"totalCost"');
   });
 
+  it("builds the session report from the ledger", async () => {
+    const index = await import("../src/index.ts");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await index.main([
+      "session",
+      "--json",
+      "--since",
+      "20260101",
+      "--until",
+      "20261231",
+      "--offline",
+      "--config",
+      configPath,
+    ]);
+
+    const payload = String(logSpy.mock.calls.at(-1)?.[0] ?? "");
+    expect(payload).toContain('"key": "project-a/session"');
+    expect(payload).toContain('"amountNanos"');
+  });
+
   it("accepts --config before command", async () => {
     const index = await import("../src/index.ts");
     await expect(index.main(["--config", configPath, "status"])).resolves.toBeUndefined();
@@ -232,6 +256,244 @@ describe("index.ts", () => {
     await expect(index.main(["--version"])).resolves.toBeUndefined();
 
     expect(logSpy).toHaveBeenCalledWith(packageJson.version);
+  });
+
+  it("prints help without requiring a config file", async () => {
+    const index = await import("../src/index.ts");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await expect(index.main(["--help"])).resolves.toBeUndefined();
+
+    expect(String(logSpy.mock.calls[0]?.[0])).toContain("Usage: cceye");
+  });
+
+  it("supports JSON status output", async () => {
+    const index = await import("../src/index.ts");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await index.main(["status", "--json", "--config", configPath]);
+
+    const output = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0])) as Record<string, number>;
+    expect(output).toMatchObject({ daily: expect.any(Number), weekly: expect.any(Number), monthly: expect.any(Number) });
+  });
+
+  it("persists alert deliveries and records partial notification success", async () => {
+    const index = await import("../src/index.ts");
+    const { loadConfig } = await import("../src/config.ts");
+    const { loadPricing } = await import("../src/pricing.ts");
+    const { createLogger } = await import("../src/logger.ts");
+    const { SqliteUsageStorage } = await import("../src/storage/sqlite-storage.ts");
+
+    const config = loadConfig(configPath);
+    config.thresholds.daily.warning = 0.001;
+    config.thresholds.daily.critical = 1;
+    const pricing = await loadPricing();
+    const logger = createLogger(config);
+    logger.silent = true;
+    const router = {
+      channelNames: vi.fn(() => ["success-channel", "failed-channel"]),
+      sendChannel: vi.fn(async (channel: string) =>
+        channel === "success-channel"
+          ? { channel, status: "success" as const }
+          : { channel, status: "failed" as const, error: "delivery failed" }
+      ),
+    };
+    const storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
+
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+
+    const deliveries = await storage.listDeliveries(Date.now() + 60_000, 10);
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.status).toBe("retrying");
+    expect(router.sendChannel).toHaveBeenCalledTimes(2);
+    await storage.close();
+  });
+
+  it("does not create duplicate firing deliveries after all channels fail", async () => {
+    const index = await import("../src/index.ts");
+    const { loadConfig } = await import("../src/config.ts");
+    const { loadPricing } = await import("../src/pricing.ts");
+    const { createLogger } = await import("../src/logger.ts");
+    const { SqliteUsageStorage } = await import("../src/storage/sqlite-storage.ts");
+
+    const config = loadConfig(configPath);
+    config.thresholds.daily.warning = 0.001;
+    config.thresholds.daily.critical = 1;
+    const pricing = await loadPricing({ offline: true });
+    const logger = createLogger(config);
+    logger.silent = true;
+    const router = {
+      channelNames: vi.fn(() => ["failed-channel"]),
+      sendChannel: vi.fn(async (channel: string) => ({ channel, status: "failed" as const, error: "offline" })),
+    };
+    const storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
+
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+
+    expect(router.sendChannel).toHaveBeenCalledTimes(1);
+    expect((await storage.getDeliveryCounts()).retrying).toBe(1);
+    await storage.close();
+  });
+
+  it("sends a recovery notification after a threshold clears", async () => {
+    const index = await import("../src/index.ts");
+    const { loadConfig } = await import("../src/config.ts");
+    const { loadPricing } = await import("../src/pricing.ts");
+    const { createLogger } = await import("../src/logger.ts");
+    const { SqliteUsageStorage } = await import("../src/storage/sqlite-storage.ts");
+
+    const config = loadConfig(configPath);
+    config.thresholds.daily.warning = 0.001;
+    config.thresholds.daily.critical = 1;
+    config.alerts.notify_on_recovery = true;
+    const pricing = await loadPricing();
+    const logger = createLogger(config);
+    logger.silent = true;
+    const router = {
+      channelNames: vi.fn(() => ["test"]),
+      sendChannel: vi.fn(async (channel: string) => ({ channel, status: "success" as const })),
+    };
+    const storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
+
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+    config.thresholds.daily.warning = 5;
+    config.thresholds.daily.critical = 10;
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+
+    expect(router.sendChannel).toHaveBeenCalledTimes(2);
+    expect((await storage.getDeliveryCounts()).delivered).toBe(2);
+    expect(JSON.parse(fs.readFileSync(path.join(tempHome, ".config", "cceye", "state.json"), "utf8")).activeAlerts.daily).toBeNull();
+    await storage.close();
+  });
+
+  it("keeps recovery active until a failed delivery is retried successfully", async () => {
+    const index = await import("../src/index.ts");
+    const { loadConfig } = await import("../src/config.ts");
+    const { loadPricing } = await import("../src/pricing.ts");
+    const { createLogger } = await import("../src/logger.ts");
+    const { SqliteUsageStorage } = await import("../src/storage/sqlite-storage.ts");
+    const { loadState } = await import("../src/state-store.ts");
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-16T12:00:00.000Z"));
+    writeUsageLog(dataDir);
+    const config = loadConfig(configPath);
+    config.thresholds.daily.warning = 0.001;
+    config.thresholds.daily.critical = 1;
+    config.alerts.notify_on_recovery = true;
+    const pricing = await loadPricing({ offline: true });
+    const logger = createLogger(config);
+    logger.silent = true;
+    let calls = 0;
+    const router = {
+      channelNames: vi.fn(() => ["test"]),
+      sendChannel: vi.fn(async (channel: string) => {
+        calls += 1;
+        return calls === 2
+          ? { channel, status: "failed" as const, error: "recovery unavailable" }
+          : { channel, status: "success" as const };
+      }),
+    };
+    const storage = new SqliteUsageStorage(config.storage.database_path);
+    await storage.migrate();
+
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+    config.thresholds.daily.warning = 5;
+    config.thresholds.daily.critical = 10;
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+    expect(loadState().activeAlerts.daily).toBe("warning");
+
+    vi.advanceTimersByTime(10_000);
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+    expect(calls).toBe(3);
+    expect(loadState().activeAlerts.daily).toBeNull();
+
+    const statePath = path.join(tempHome, ".config", "cceye", "state.json");
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as { activeAlerts: { daily: string | null } };
+    state.activeAlerts.daily = "warning";
+    fs.writeFileSync(statePath, JSON.stringify(state));
+    await index.pollOnce(config, pricing, router as never, logger, false, undefined, true, storage);
+    expect(calls).toBe(3);
+    expect(loadState().activeAlerts.daily).toBeNull();
+    await storage.close();
+  });
+
+  it("exposes pricing, billing, reconciliation, doctor, and explicit notification commands", async () => {
+    const index = await import("../src/index.ts");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await index.main(["prices", "explain", "claude-sonnet-4-5-20250929", "--offline", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain("Cache read");
+
+    await index.main(["billing", "status", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"records"');
+
+    await index.main(["reconcile", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"estimatedCoverage"');
+
+    await index.main(["doctor", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"checks"');
+
+    await index.main(["notifications", "reset"]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain("reset");
+
+    await index.main(["notify", "test", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"test":true');
+
+    await index.main(["db", "check", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"ok":true');
+    await index.main(["db", "backup", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"backupPath"');
+
+    const { loadConfig } = await import("../src/config.ts");
+    const { SqliteUsageStorage } = await import("../src/storage/sqlite-storage.ts");
+    const loadedConfig = loadConfig(configPath);
+    const retryStorage = new SqliteUsageStorage(loadedConfig.storage.database_path);
+    await retryStorage.createAlert({
+      id: "cli-alert",
+      fingerprint: "cli-alert",
+      windowKey: "daily",
+      windowStartMs: 0,
+      level: "warning",
+      state: "firing",
+      currentAmountNanos: 1n,
+      thresholdAmountNanos: 1n,
+      firstSeenAtMs: 1,
+      lastSeenAtMs: 1,
+      resolvedAtMs: null,
+    });
+    await retryStorage.enqueueDelivery({
+      id: "cli-delivery",
+      alertId: "cli-alert",
+      channel: "test",
+      transition: "firing",
+      status: "dead",
+      attempts: 5,
+      nextAttemptAtMs: 0,
+      lastError: "failed",
+      idempotencyKey: "cli-key",
+      createdAtMs: 1,
+      deliveredAtMs: null,
+    });
+    await retryStorage.close();
+    await index.main(["alerts", "retry", "cli-delivery", "--json", "--config", configPath]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"retried":true');
+
+    const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const isolatedProjects = path.join(tempRoot, "projects");
+    fs.cpSync(dataDir, isolatedProjects, { recursive: true });
+    process.env.CLAUDE_CONFIG_DIR = isolatedProjects;
+    await index.main(["db", "rebuild", "--json", "--config", configPath]);
+    if (originalClaudeConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+    }
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('"databasePath"');
   });
 
   it("treats symlinked executable path as direct run", async () => {
@@ -305,6 +567,22 @@ describe("index.ts", () => {
     ]);
 
     expect(trend).toEqual([{ hour: "2026-02-11T12:00:00.000Z", cost: 3 }]);
+
+    expect(
+      index.hourlyTrend([
+        {
+          timestamp: new Date("2026-02-11T12:10:00.000Z"),
+          model: "unknown",
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+          messageId: null,
+          requestId: null,
+          costUSD: null,
+        },
+      ])
+    ).toEqual([]);
     expect(index.toModelBreakdown({ a: 1, b: 2 })).toEqual([
       { model: "a", cost: 1 },
       { model: "b", cost: 2 },

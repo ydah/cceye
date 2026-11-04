@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseSessionFile, scanSessionFiles } from "../src/log-parser.ts";
+import { parseSessionFile, parseUsageLineDetailed, scanSessionFiles } from "../src/log-parser.ts";
 
 function createTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "cceye-log-parser-"));
@@ -25,7 +25,7 @@ describe("scanSessionFiles", () => {
     fs.writeFileSync(path.join(tempDir, "a", "b", "ignored.txt"), "");
 
     const files = await scanSessionFiles(tempDir);
-    const relative = files.map((file) => path.relative(tempDir, file)).sort();
+    const relative = files.map((file) => path.relative(tempDir, file).split(path.sep).join("/")).sort();
     expect(relative).toEqual(["a/b/nested.jsonl", "root.jsonl"]);
   });
 
@@ -136,6 +136,35 @@ describe("parseSessionFile", () => {
     expect(result.parsedBytes).toBeGreaterThan(startOffset);
   });
 
+  it("parses a complete final line without a newline", async () => {
+    tempDir = createTempDir();
+    const file = path.join(tempDir, "no-final-newline.jsonl");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        timestamp: "2026-02-11T10:00:00.000Z",
+        message: { usage: { input_tokens: 1, output_tokens: 2 }, model: "final-line" },
+      })
+    );
+
+    const result = await parseSessionFile(file);
+
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]?.model).toBe("final-line");
+    expect(result.parsedBytes).toBe(fs.statSync(file).size);
+  });
+
+  it("sanitizes control characters in model labels", () => {
+    const result = parseUsageLineDetailed(
+      JSON.stringify({
+        timestamp: "2026-02-11T10:00:00.000Z",
+        message: { usage: { input_tokens: 1, output_tokens: 2 }, model: "model-\u001b[31m" },
+      })
+    );
+
+    expect(result.entry?.model).toBe("model-�[31m");
+  });
+
   it("coerces unknown optional fields to safe defaults", async () => {
     tempDir = createTempDir();
     const file = path.join(tempDir, "unknown-fields.jsonl");
@@ -235,5 +264,22 @@ describe("parseSessionFile", () => {
     expect(entries).toHaveLength(2);
     expect(entries[0]?.costUSD).toBeNull();
     expect(entries[1]?.costUSD).toBeNull();
+  });
+
+  it("skips JSONL records above the parser line limit", async () => {
+    tempDir = createTempDir();
+    const file = path.join(tempDir, "oversized.jsonl");
+    fs.writeFileSync(file, `${"x".repeat(2 * 1024 * 1024 + 1)}\n`);
+
+    const result = await parseSessionFile(file);
+
+    expect(result.entries).toEqual([]);
+    expect(result.parsedBytes).toBeGreaterThan(2 * 1024 * 1024);
+  });
+
+  it("rejects oversized direct parser input", () => {
+    const result = parseUsageLineDetailed("x".repeat(2 * 1024 * 1024 + 1));
+
+    expect(result).toEqual({ entry: null, reason: "line_too_large" });
   });
 });

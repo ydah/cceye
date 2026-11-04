@@ -80,6 +80,22 @@ describe("loadPricing", () => {
     });
   });
 
+  it("repairs permissions on an existing pricing cache", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    writeCache(tempHome, Date.now(), {});
+    const cachePath = cachePathFor(tempHome);
+    fs.chmodSync(path.dirname(cachePath), 0o755);
+    fs.chmodSync(cachePath, 0o644);
+    const { loadPricing } = await import("../src/pricing.ts");
+
+    await loadPricing({ offline: true });
+
+    expect(fs.statSync(path.dirname(cachePath)).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(cachePath).mode & 0o777).toBe(0o600);
+  });
+
   it("fetches pricing data and writes cache when online", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
@@ -275,6 +291,24 @@ describe("loadPricing", () => {
       cacheReadPerMTok: 1.5,
     });
   });
+
+  it("does not strip model family names as if they were provider prefixes", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        sonnet: {
+          input_cost_per_token: 0.000001,
+          output_cost_per_token: 0.000002,
+        },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { loadPricing } = await import("../src/pricing.ts");
+    const pricing = await loadPricing();
+
+    expect(pricing.getPrice("claude-3-5-sonnet")).toBeNull();
+  });
   it("maps tiered 200k pricing fields", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
@@ -357,5 +391,19 @@ describe("loadPricing", () => {
     const pricing = await loadPricing({ offline: true });
 
     expect(pricing.getPrice("non-existent-model")).toBeNull();
+  });
+
+  it("applies explicit aliases to built-in fallback prices", async () => {
+    const { loadPricing } = await import("../src/pricing.ts");
+    const pricing = await loadPricing({
+      offline: true,
+      aliases: { "claude-sonnet-latest": "claude-sonnet-4-5-20250929" },
+    });
+
+    expect(pricing.getPrice("claude-sonnet-latest")).toMatchObject({ inputPerMTok: 3, outputPerMTok: 15 });
+    expect(pricing.explain?.("claude-sonnet-latest")).toMatchObject({
+      matchedModel: "claude-sonnet-4-5-20250929",
+      matchType: "explicit_alias",
+    });
   });
 });

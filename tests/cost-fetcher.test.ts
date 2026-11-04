@@ -142,7 +142,7 @@ describe("cost-fetcher", () => {
     await expect(
       fetchCostForPeriod("bad-key", new Date("2026-02-01T00:00:00.000Z"), new Date("2026-02-11T00:00:00.000Z"), "1d")
     ).rejects.toThrow(/authentication failed/);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("throws when API payload schema is invalid", async () => {

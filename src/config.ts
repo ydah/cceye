@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import yaml from "yaml";
 import { z } from "zod";
+import { protectPrivateDirectory, protectPrivateFile } from "./file-permissions.js";
 
 const thresholdsSchema = z.object({
   warning: z.number().nonnegative(),
@@ -38,11 +39,31 @@ const dashboardSchema = z.object({
   refresh_interval_seconds: z.number().int().positive(),
 });
 
+const storageSchema = z.object({
+  database_path: z.string().min(1).default("~/.config/cceye/cceye.db"),
+});
+
+const pricingSchema = z.object({
+  aliases: z.record(z.string(), z.string()).default({}),
+});
+
+const billingSchema = z.object({
+  anthropic: z.object({
+    enabled: z.boolean().default(false),
+    api_key_env: z.string().min(1).default("CCEYE_ANTHROPIC_ADMIN_API_KEY"),
+  }),
+});
+
+const alertsSchema = z.object({
+  notify_on_recovery: z.boolean().default(false),
+  max_retries: z.number().int().positive().default(5),
+});
+
 const configSchema = z
   .object({
     claude_data_dir: z.string().min(1).default("~/.claude/projects"),
     polling_interval_milliseconds: z.number().int().positive().optional(),
-    timezone: z.string().min(1),
+    timezone: z.string().min(1).refine(isValidTimezone, "must be a valid IANA timezone"),
     cost_mode: z.enum(["auto", "calculate", "display"]),
     thresholds: z.object({
       daily: thresholdsSchema,
@@ -53,6 +74,10 @@ const configSchema = z
     notification_cooldown_minutes: z.number().int().positive(),
     log_level: z.enum(["debug", "info", "warn", "error"]),
     dashboard: dashboardSchema,
+    storage: storageSchema.default({ database_path: "~/.config/cceye/cceye.db" }),
+    pricing: pricingSchema.default({ aliases: {} }),
+    billing: billingSchema.default({ anthropic: { enabled: false, api_key_env: "CCEYE_ANTHROPIC_ADMIN_API_KEY" } }),
+    alerts: alertsSchema.default({ notify_on_recovery: false, max_retries: 5 }),
   })
   .superRefine((value, context) => {
     if (value.polling_interval_milliseconds === undefined) {
@@ -101,6 +126,26 @@ const configSchema = z
         });
       }
     }
+
+    const normalizedAliases = Object.fromEntries(
+      Object.entries(value.pricing.aliases).map(([alias, target]) => [alias.trim().toLowerCase(), target.trim().toLowerCase()])
+    );
+    for (const alias of Object.keys(normalizedAliases)) {
+      const seen = new Set<string>();
+      let current: string | undefined = alias;
+      while (current && normalizedAliases[current]) {
+        if (seen.has(current)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["pricing", "aliases", alias],
+            message: "pricing aliases must not contain cycles",
+          });
+          break;
+        }
+        seen.add(current);
+        current = normalizedAliases[current];
+      }
+    }
   })
   .transform((value) => ({
     ...value,
@@ -108,6 +153,15 @@ const configSchema = z
   }));
 
 export type Config = z.infer<typeof configSchema>;
+
+function isValidTimezone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const defaultConfigPath = path.join(os.homedir(), ".config", "cceye", "config.yaml");
 
@@ -137,27 +191,51 @@ export function loadConfig(argPath?: string): Config {
     throw new Error(`config file not found: ${configPath}`);
   }
 
+  if (path.resolve(path.dirname(configPath)) === path.resolve(path.join(os.homedir(), ".config", "cceye"))) {
+    protectPrivateDirectory(path.dirname(configPath));
+  }
+  protectPrivateFile(configPath);
   const raw = fs.readFileSync(configPath, "utf8");
-  const parsed = yaml.parse(raw) ?? {};
+  let parsed: unknown;
+  try {
+    const document = yaml.parseDocument(raw);
+    if (document.errors.length > 0 || document.warnings.length > 0) {
+      throw new Error("config document contains YAML diagnostics");
+    }
+    parsed = document.toJS() ?? {};
+  } catch {
+    throw new Error("invalid config YAML");
+  }
   if (typeof parsed !== "object" || parsed === null) {
     throw new Error("config must be a YAML object");
   }
 
-  if (parsed.notifications?.slack?.enabled && !parsed.notifications.slack.webhook_url) {
+  const parsedConfig = parsed as Record<string, unknown>;
+  const notifications = asRecord(parsedConfig.notifications);
+  const slack = asRecord(notifications?.slack);
+  const email = asRecord(notifications?.email);
+
+  if (slack?.enabled === true && !slack.webhook_url) {
     const envWebhook = process.env.CCEYE_SLACK_WEBHOOK_URL;
     if (envWebhook) {
-      parsed.notifications.slack.webhook_url = envWebhook;
+      parsedConfig.notifications = {
+        ...notifications,
+        slack: { ...slack, webhook_url: envWebhook },
+      };
     }
   }
 
-  if (parsed.notifications?.email?.enabled && !parsed.notifications.email.smtp_pass) {
+  if (email?.enabled === true && !email.smtp_pass) {
     const envPass = process.env.CCEYE_SMTP_PASS;
     if (envPass) {
-      parsed.notifications.email.smtp_pass = envPass;
+      parsedConfig.notifications = {
+        ...asRecord(parsedConfig.notifications),
+        email: { ...email, smtp_pass: envPass },
+      };
     }
   }
 
-  const result = configSchema.safeParse(parsed);
+  const result = configSchema.safeParse(parsedConfig);
   if (!result.success) {
     throw new Error(formatZodError(result.error));
   }
@@ -165,8 +243,20 @@ export function loadConfig(argPath?: string): Config {
   return {
     ...result.data,
     claude_data_dir: expandHome(result.data.claude_data_dir),
+    storage: {
+      ...result.data.storage,
+      database_path: expandHome(result.data.storage.database_path),
+    },
+    pricing: result.data.pricing,
   };
 }
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+};
 
 export function loadConfigFromArgs(args: string[]): Config {
   const configIndex = args.findIndex((arg) => arg === "--config");

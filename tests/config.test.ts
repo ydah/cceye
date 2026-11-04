@@ -76,6 +76,20 @@ describe("config", () => {
     expect(config.cost_mode).toBe("auto");
   });
 
+  it("hardens an existing config file before reading it", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const configPath = path.join(tempDir, "config.yaml");
+    fs.writeFileSync(configPath, baseConfigYaml(), { mode: 0o644 });
+    fs.chmodSync(configPath, 0o644);
+    const { loadConfig } = await import("../src/config.ts");
+
+    loadConfig(configPath);
+
+    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+  });
+
   it("loads config with millisecond polling interval", async () => {
     const configPath = path.join(tempDir, "config.yaml");
     fs.writeFileSync(configPath, baseConfigYaml().replace("polling_interval_milliseconds: 300000", "polling_interval_milliseconds: 2500"));
@@ -94,6 +108,27 @@ describe("config", () => {
     fs.writeFileSync(configPath, `"string-root"`);
     const { loadConfig } = await import("../src/config.ts");
     expect(() => loadConfig(configPath)).toThrow(/config must be a YAML object/);
+  });
+
+  it("does not expose secret-bearing YAML lines in parse errors", async () => {
+    const configPath = path.join(tempDir, "config.yaml");
+    fs.writeFileSync(configPath, "notifications:\n  email:\n    smtp_pass: [secret-value\n");
+    const { loadConfig } = await import("../src/config.ts");
+
+    expect(() => loadConfig(configPath)).toThrow("invalid config YAML");
+    try {
+      loadConfig(configPath);
+    } catch (error) {
+      expect(String(error)).not.toContain("secret-value");
+    }
+  });
+
+  it("does not expose secret-bearing YAML warnings", async () => {
+    const configPath = path.join(tempDir, "config.yaml");
+    fs.writeFileSync(configPath, "notifications:\n  email:\n    smtp_pass: !custom SECRET_VALUE\n");
+    const { loadConfig } = await import("../src/config.ts");
+
+    expect(() => loadConfig(configPath)).toThrow("invalid config YAML");
   });
 
   it("validates threshold ordering", async () => {

@@ -26,7 +26,7 @@ describe("calculateCost", () => {
   it("returns costUSD in display mode", () => {
     const pricing = createPricing(() => null);
     expect(calculateCost(createEntry({ costUSD: 1.23 }), "display", pricing)).toBe(1.23);
-    expect(calculateCost(createEntry({ costUSD: null }), "display", pricing)).toBe(0);
+    expect(calculateCost(createEntry({ costUSD: null }), "display", pricing)).toBeNull();
   });
 
   it("returns costUSD in auto mode when available without pricing lookup", () => {
@@ -88,8 +88,8 @@ describe("calculateCost", () => {
     expect(cost).toBeCloseTo(expected, 8);
   });
 
-  it("returns 0 when pricing is unavailable", () => {
+  it("returns null when pricing is unavailable", () => {
     const pricing = createPricing(() => null);
-    expect(calculateCost(createEntry(), "calculate", pricing)).toBe(0);
+    expect(calculateCost(createEntry(), "calculate", pricing)).toBeNull();
   });
 });

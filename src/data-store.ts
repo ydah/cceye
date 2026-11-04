@@ -4,15 +4,18 @@ import path from "path";
 import { formatISO } from "date-fns";
 import { z } from "zod";
 import type { WindowKey } from "./state-store.js";
+import type { DeliveryResult } from "./notifiers/types.js";
+import type { CostBasis, CostCoverage, DeliveryCounts, IngestionHealth } from "./storage/storage.js";
+import { protectPrivateDirectory, protectPrivateFile } from "./file-permissions.js";
 
 export interface ModelCost {
   model: string;
-  cost: number;
+  cost: number | null;
 }
 
 export interface ProjectCost {
   project: string;
-  cost: number;
+  cost: number | null;
 }
 
 export interface TrendPoint {
@@ -27,14 +30,21 @@ export interface NotificationHistoryEntry {
   currentCost: number;
   threshold: number;
   channels: string[];
+  deliveryResults?: DeliveryResult[] | undefined;
+  transition?: "firing" | "recovery" | undefined;
 }
 
 export interface DataStoreState {
-  currentCosts: Record<WindowKey, number>;
+  currentCosts: Record<WindowKey, number | null>;
   modelBreakdown: Record<WindowKey, ModelCost[]>;
   projectBreakdown: Record<WindowKey, ProjectCost[]>;
   hourlyTrend: TrendPoint[];
   notificationHistory: NotificationHistoryEntry[];
+  coverage: Record<WindowKey, CostCoverage>;
+  ingestionHealth: IngestionHealth | null;
+  pricingStatus: "fresh" | "stale" | "fallback" | "unavailable";
+  deliveryCounts: DeliveryCounts;
+  costBasis: CostBasis;
   lastUpdated: string | null;
 }
 
@@ -44,17 +54,28 @@ const windows: WindowKey[] = ["daily", "weekly", "monthly"];
 
 const modelCostSchema = z.object({
   model: z.string(),
-  cost: z.number(),
+  cost: z.number().nullable(),
 });
 
 const projectCostSchema = z.object({
   project: z.string(),
-  cost: z.number(),
+  cost: z.number().nullable(),
 });
 
 const trendPointSchema = z.object({
   hour: z.string(),
   cost: z.number(),
+});
+
+const coverageSchema = z.object({
+  pricedEvents: z.number().int().nonnegative(),
+  unpricedEvents: z.number().int().nonnegative(),
+  totalEvents: z.number().int().nonnegative(),
+  pricedInputTokens: z.number().int().nonnegative(),
+  totalInputTokens: z.number().int().nonnegative(),
+  eventCoverageRatio: z.number().nonnegative(),
+  tokenCoverageRatio: z.number().nonnegative(),
+  complete: z.boolean(),
 });
 
 const notificationHistoryEntrySchema = z.object({
@@ -63,16 +84,26 @@ const notificationHistoryEntrySchema = z.object({
   window: z.enum(["daily", "weekly", "monthly"]),
   currentCost: z.number(),
   threshold: z.number(),
+  transition: z.enum(["firing", "recovery"]).optional(),
   channels: z.array(z.string()),
+  deliveryResults: z
+    .array(
+      z.union([
+        z.object({ channel: z.string(), status: z.literal("success") }),
+        z.object({ channel: z.string(), status: z.literal("failed"), error: z.string() }),
+        z.object({ channel: z.string(), status: z.literal("skipped"), reason: z.string() }),
+      ])
+    )
+    .optional(),
 });
 
 const dataStoreSchema = z
   .object({
     currentCosts: z
       .object({
-        daily: z.number().optional(),
-        weekly: z.number().optional(),
-        monthly: z.number().optional(),
+        daily: z.number().nullable().optional(),
+        weekly: z.number().nullable().optional(),
+        monthly: z.number().nullable().optional(),
       })
       .partial()
       .optional(),
@@ -94,11 +125,31 @@ const dataStoreSchema = z
       .optional(),
     hourlyTrend: z.array(trendPointSchema).optional(),
     notificationHistory: z.array(notificationHistoryEntrySchema).optional(),
+    coverage: z
+      .object({ daily: coverageSchema.optional(), weekly: coverageSchema.optional(), monthly: coverageSchema.optional() })
+      .partial()
+      .optional(),
+    ingestionHealth: z.unknown().nullable().optional(),
+    pricingStatus: z.enum(["fresh", "stale", "fallback", "unavailable"]).optional(),
+    deliveryCounts: z
+      .object({ pending: z.number(), retrying: z.number(), leased: z.number(), delivered: z.number(), dead: z.number() })
+      .optional(),
+    costBasis: z.enum(["reported", "estimated", "hybrid", "billed"]).optional(),
     lastUpdated: z.string().nullable().optional(),
   })
   .passthrough();
 
 export function createEmptyData(): DataStoreState {
+  const emptyCoverage = (): CostCoverage => ({
+    pricedEvents: 0,
+    unpricedEvents: 0,
+    totalEvents: 0,
+    pricedInputTokens: 0,
+    totalInputTokens: 0,
+    eventCoverageRatio: 1,
+    tokenCoverageRatio: 1,
+    complete: true,
+  });
   return {
     currentCosts: {
       daily: 0,
@@ -117,6 +168,11 @@ export function createEmptyData(): DataStoreState {
     },
     hourlyTrend: [],
     notificationHistory: [],
+    coverage: { daily: emptyCoverage(), weekly: emptyCoverage(), monthly: emptyCoverage() },
+    ingestionHealth: null,
+    pricingStatus: "unavailable",
+    deliveryCounts: { pending: 0, retrying: 0, leased: 0, delivered: 0, dead: 0 },
+    costBasis: "hybrid",
     lastUpdated: null,
   };
 }
@@ -127,6 +183,8 @@ export function loadData(): DataStoreState {
   }
 
   try {
+    protectPrivateDirectory(path.dirname(dataFilePath));
+    protectPrivateFile(dataFilePath);
     const raw = fs.readFileSync(dataFilePath, "utf8");
     const parsedFile = dataStoreSchema.safeParse(JSON.parse(raw) as unknown);
     if (!parsedFile.success) {
@@ -154,6 +212,15 @@ export function loadData(): DataStoreState {
         monthly: parsed.projectBreakdown?.monthly ?? emptyData.projectBreakdown.monthly,
       },
       notificationHistory: parsed.notificationHistory ?? [],
+      coverage: {
+        daily: parsed.coverage?.daily ?? emptyData.coverage.daily,
+        weekly: parsed.coverage?.weekly ?? emptyData.coverage.weekly,
+        monthly: parsed.coverage?.monthly ?? emptyData.coverage.monthly,
+      },
+      ingestionHealth: isIngestionHealth(parsed.ingestionHealth) ? parsed.ingestionHealth : null,
+      pricingStatus: parsed.pricingStatus ?? emptyData.pricingStatus,
+      deliveryCounts: parsed.deliveryCounts ?? emptyData.deliveryCounts,
+      costBasis: parsed.costBasis ?? emptyData.costBasis,
       hourlyTrend: parsed.hourlyTrend ?? [],
     };
   } catch {
@@ -161,15 +228,41 @@ export function loadData(): DataStoreState {
   }
 }
 
-export function saveData(data: DataStoreState): void {
-  const dir = path.dirname(dataFilePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tempPath = `${dataFilePath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
-  fs.renameSync(tempPath, dataFilePath);
+export function updateCoverage(
+  data: DataStoreState,
+  coverage: Partial<Record<WindowKey, CostCoverage>>,
+  pricingStatus?: DataStoreState["pricingStatus"],
+  ingestionHealth?: IngestionHealth | null
+): void {
+  data.coverage = { ...data.coverage, ...coverage };
+  if (pricingStatus) {
+    data.pricingStatus = pricingStatus;
+  }
+  if (ingestionHealth !== undefined) {
+    data.ingestionHealth = ingestionHealth;
+  }
 }
 
-export function updateCurrentCosts(data: DataStoreState, costs: Record<WindowKey, number>): void {
+const isIngestionHealth = (value: unknown): value is IngestionHealth => {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const health = value as Partial<IngestionHealth>;
+  return typeof health.scannedFiles === "number" && typeof health.bytesRead === "number";
+};
+
+export function saveData(data: DataStoreState): void {
+  const dir = path.dirname(dataFilePath);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
+  const tempPath = `${dataFilePath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), { mode: 0o600 });
+  fs.chmodSync(tempPath, 0o600);
+  fs.renameSync(tempPath, dataFilePath);
+  fs.chmodSync(dataFilePath, 0o600);
+}
+
+export function updateCurrentCosts(data: DataStoreState, costs: Record<WindowKey, number | null>): void {
   data.currentCosts = { ...data.currentCosts, ...costs };
 }
 

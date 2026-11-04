@@ -27,4 +27,4 @@ This fixture set is used as a deterministic regression baseline for parser and a
 Notes:
 - `auto` uses `costUSD` when present, otherwise token-based calculation.
 - `calculate` always uses token-based calculation.
-- `display` uses only `costUSD` and falls back to `0` when missing.
+- `display` uses only `costUSD`; missing values remain unpriced (`null`/`UNPRICED`).

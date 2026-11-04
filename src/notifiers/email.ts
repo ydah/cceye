@@ -23,6 +23,9 @@ export class EmailNotifier implements Notifier {
       host: email.smtp_host,
       port: email.smtp_port,
       secure: email.smtp_secure,
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 15_000,
       auth: {
         user: email.smtp_user,
         pass: email.smtp_pass,
@@ -37,9 +40,9 @@ export class EmailNotifier implements Notifier {
       return;
     }
 
-    const label = alert.level === "critical" ? "CRITICAL" : "WARNING";
-    const subject = `[${label}] Claude Cost ${formatWindowLabel(alert.window)} threshold exceeded`;
-    const text = `${label} ${formatWindowLabel(alert.window)} cost exceeded.
+    const label = alert.transition === "recovery" ? "RECOVERY" : alert.level === "critical" ? "CRITICAL" : "WARNING";
+    const subject = `[${label}] Claude Cost ${formatWindowLabel(alert.window)} ${alert.transition === "recovery" ? "recovered" : "threshold exceeded"}`;
+    const text = `${label} ${formatWindowLabel(alert.window)} ${alert.transition === "recovery" ? "cost recovered." : "cost exceeded."}
 
 Current cost: $${alert.currentCost.toFixed(2)}
 Threshold: $${alert.threshold.toFixed(2)}
@@ -51,6 +54,7 @@ Time: ${alert.timestamp.toISOString()}
       to: this.to.split(",").map((entry) => entry.trim()),
       subject,
       text,
+      headers: alert.idempotencyKey ? { "X-Cceye-Idempotency-Key": alert.idempotencyKey } : undefined,
     });
   }
 }
